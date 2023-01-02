@@ -834,10 +834,11 @@ ClusterBegin:                  ; Get Sectors per FAT, then * 2, then add FAT bag
   sta ClusterBeginLBA+2        ; Store Sectors per FAT, using ClusterBegiaLBA as temp location
   lda $0324                    ; Get sectors per FAT
   sta ClusterBeginLBA+3        ; Store Sectors per FAT, using ClusterBegiaLBA as temp location
-  asl ClusterBeginLBA+3        ; Sectors per FAT * 2 (LSB)
-  asl ClusterBeginLBA+2        ; Sectors per FAT * 2
-  asl ClusterBeginLBA+1        ; Sectors per FAT * 2
-  asl ClusterBeginLBA          ; Sectors per FAT * 2 (MSB)
+  clc
+  rol ClusterBeginLBA+3        ; Sectors per FAT * 2 (LSB)
+  rol ClusterBeginLBA+2        ; Sectors per FAT * 2
+  rol ClusterBeginLBA+1        ; Sectors per FAT * 2
+  rol ClusterBeginLBA          ; Sectors per FAT * 2 (MSB)
   clc                          ; Clear carry before adding FAT begin and size of FAT
   lda FATBeginLBA+3            ; Get FAT begin
   adc ClusterBeginLBA+3        ; Add Size of FAT (Sectors per FAT * 2)
