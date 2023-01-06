@@ -60,6 +60,8 @@ SectorIndex = $0216            ; Which sector of the current cluster
 RootDirCluster = $0217         ; 4 bytes including 0217,0218,0219,021A
 ClusterNum = $021B             ; 4 bytes including 021B,021C,021D,021E
 ClusterTemp = $021F            ; Used as part of next cluster math
+SectorTemp  = $0220            ; 4 bytes including 0220,0221,0222,0223
+SDHCFlag = $0224               ; Flag to show if we have an SDHC card
 
 ; Used for loading of files form SDcard.
 FileNumber = $0250             ; File Number to create FileName
@@ -669,9 +671,31 @@ CMD58:
   jmp SD_Card_Error            ; If R1 result code is not 1 then return error
 SD_Card_Ready:
   jsr SPI_Read_Byte            ; Read R3 result code byte 1
+  and #0b01000000              ; Mask off must the SDHC bit.
+  sta SDHCFlag                 ; Store a flag to show if we have a SDcard or an SDHC card
   jsr SPI_Read_Byte            ; Read R3 result code byte 2
   jsr SPI_Read_Byte            ; Read R3 result code byte 3
   jsr SPI_Read_Byte            ; Read R3 result code byte 4
+SetBlockLength:
+  lda #$FF                     ; Setup $FF byte
+  jsr SPI_Write_Byte           ; Send $FF byte before CMD16
+  lda #$50                     ; Setup CMD16
+  jsr SPI_Write_Byte           ; Send byte CMD16
+  lda #$00                     ; bits 24-31
+  jsr SPI_Write_Byte           ; Send byte
+  lda #$00                     ; bits 16-23
+  jsr SPI_Write_Byte           ; Send byte
+  lda #$02                     ; bits 8-15    $0200 = 512 bytes
+  jsr SPI_Write_Byte           ; Send byte
+  lda #$00                     ; bits 0-7
+  jsr SPI_Write_Byte           ; Send byte
+  lda #$FF                     ; Setup fake CRC
+  jsr SPI_Write_Byte           ; Send CRC byte before CMD
+  jsr SD_Card_Result           ; Wait for R1 result code
+  cmp #$00                     ; Check R1 result code is 00
+  beq EndSDInit                ; If R1 result code is 00 then init finished
+  jmp SD_Card_Error            ; If R1 result code is not 1 then return error
+EndSDInit
   lda #$FF                     ; Setup $FF junk byte
   jsr SPI_Write_Byte           ; Send $FF junk byte before CS_ change
   jsr SPI_Unselect_SDcard      ; Change CS_ to high to unslect SDcard
@@ -680,6 +704,8 @@ SD_Card_Ready:
   lda #$00                     ; Return no error
   sta ErrorCode                ; store error code
   rts
+
+
 
 
 SD_Card_Read_Sector:           ; Reads a sector to location pointed to by ZP_SectorBufPTR
@@ -696,18 +722,45 @@ CMD17_Setup:
   jsr SPI_Select_SDcard        ; Select the SD card
   lda #$FF                     ; Setup $FF junk byte
   jsr SPI_Write_Byte           ; Send junk after CS_ change
+SetupSector:
+  lda CurrentSector            ; Move current sector to a temp locaton to preserve it.
+  sta SectorTemp               ; Move current sector to a temp locaton to preserve it.
+  lda CurrentSector+1          ; Move current sector to a temp locaton to preserve it.
+  sta SectorTemp+1             ; Move current sector to a temp locaton to preserve it.
+  lda CurrentSector+2          ; Move current sector to a temp locaton to preserve it.
+  sta SectorTemp+2             ; Move current sector to a temp locaton to preserve it.
+  lda CurrentSector+3          ; Move current sector to a temp locaton to preserve it.
+  sta SectorTemp+3             ; Move current sector to a temp locaton to preserve it.
+Check_SDHC:
+  lda #$00                     ; Standard SD card will have a Flag of 00, SDHC will be $40
+  cmp SDHCFlag                 ; Check if we have a SDHC card or not.
+  bne CMD17                    ; SDHC card means we just read sector with CMD17
+SD_Math:                       ; Standard SD card need sector converted to bytes.
+  lda CurrentSector+3          ; Move sector by one whole byte to get * 256
+  sta SectorTemp+2             ; Move sector by one whole byte to get * 256
+  lda CurrentSector+2          ; Move sector by one whole byte to get * 256
+  sta SectorTemp+1             ; Move sector by one whole byte to get * 256
+  lda CurrentSector+1          ; Move sector by one whole byte to get * 256
+  sta SectorTemp               ; Move sector by one whole byte to get * 256
+  lda #$00                     ; Move sector by one whole byte to get * 256
+  sta SectorTemp+3             ; Move sector by one whole byte to get * 256
+  clc                          ; Clear carry before the rotate
+  rol SectorTemp+3             ; Rotate left to get a mul * 2
+  rol SectorTemp+2             ; Rotate left to get a mul * 2
+  rol SectorTemp+1             ; Rotate left to get a mul * 2
+  rol SectorTemp               ; Rotate left to get a mul * 2
 CMD17:
   lda #$FF                     ; Setup $FF junk byte
   jsr SPI_Write_Byte           ; Send $FF junk before CMD
   lda #$51                     ; Setup CMD17
   jsr SPI_Write_Byte           ; Send CMD17 byte
-  lda CurrentSector            ; Get LBA Sector byte 0
+  lda SectorTemp               ; Get LBA Sector byte 0
   jsr SPI_Write_Byte           ; Send LBA Sector byte 0
-  lda CurrentSector+1          ; Get LBA Sector byte 1
+  lda SectorTemp+1             ; Get LBA Sector byte 1
   jsr SPI_Write_Byte           ; Send LBA Sector byte 1
-  lda CurrentSector+2          ; Get LBA Sector byte 2
+  lda SectorTemp+2             ; Get LBA Sector byte 2
   jsr SPI_Write_Byte           ; Send address byte 2
-  lda CurrentSector+3          ; Get LBA Sector byte 3
+  lda SectorTemp+3             ; Get LBA Sector byte 3
   jsr SPI_Write_Byte           ; send address byte 3
   lda #$FF                     ; Setup fake CRC, CRC is not needed at this point
   jsr SPI_Write_Byte           ; Send CRC byte
