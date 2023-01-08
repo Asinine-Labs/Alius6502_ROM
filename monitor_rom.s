@@ -70,9 +70,17 @@ FileSize = $025D               ; File Size, 2 bytes including $025D(LSB) ,$025E(
 SectorCount = $025F            ; Number of whole sectors needed to load
 LoadAddrPTR = $0260            ; Address pointer - Where to load file, $0260(LSB),$0261(MSB)
 
-; Hardware IRQ calls code based on the pointer at IRQ_Vec
-IRQ_Vec = $02FE                ; IRQ vector in RAM, $02FE and $02FF
+; Debug CPU status.
+AREG = $0270                   ; Value of A register
+XREG = $0271                   ; Value of X register
+YREG = $0272                   ; Value of Y register
+Status = $0273                 ; Value of Status register
+PC_Low = $0274                 ; Value of Program Count Low byte 
+PC_High = $0275                ; Value of Program Count High Byte
 
+; Hardware IRQ calls code based on the pointer at NMI_Vec & IRQ_Vec
+NMI_Vec = $02FC                ; MNI vector in RAM, $02FC and $02FD
+IRQ_Vec = $02FE                ; IRQ vector in RAM, $02FE and $02FF
 
 ;-----------------------------------------------------------------------------------------
 ; Main code of Monitor ROM
@@ -88,6 +96,11 @@ Reset:
   sta IRQ_Vec                  ; Set default IRQ handler
   lda #>IRQ_Exit               ; High byte of IRQ_Exit
   sta IRQ_Vec+1                ; Set default IRQ handler
+
+  lda #<IRQ_Exit               ; Low byte of IRQ_Exit
+  sta NMI_Vec                  ; Set default NMI handler
+  lda #>IRQ_Exit               ; High byte of IRQ_Exit
+  sta NMI_Vec+1                ; Set default NMI handler
 
   lda #$FF
   sta DDRB                     ; Set 6522 Port B to all output
@@ -114,6 +127,8 @@ Reset:
 
   lda #0b00001100              ; Config SPI bus, set both CS_ set high, clock and data low.
   sta PORTB
+
+  cli                          ; Turn on interrupts to support BRK debug.
 
   lda #$00                     ; Setup to read "00.BIN"
   sta FileNumber 
@@ -1349,9 +1364,56 @@ CreateFileName:
 
 
 IRQ:
-  jmp ($02FE)                  ; IRQ vector in RAM, default will jump back to IRQ_Exit
+  pha                          ; Push A to the Stack
+  txa                          ; Move X to A
+  pha                          ; Push A(really X) to the stack
+  tya                          ; Move Y to A
+  pha                          ; Push A(really X) to the stack
+  tsx                          ; Move Stack Pointer to X
+  lda $0104,X                  ; Move the Stack copy of Status Flags to A
+  and #$10                     ; Mask off just the B flag
+  bne BRK                      ; If B is not 0, then run BRK Handling code
+  pla                          ; Pop A(really Y) from stack 
+  tay                          ; Move A to Y
+  pla                          ; Pop A(really X) from stack
+  tax                          ; Move A to X
+  pla                          ; Pop  A
+  jmp DoIRQ                    ; Do normal IRQ
+BRK:
+  lda $0103,X                  ; Get copy of A register from stack
+  sta AREG                     ; Store A register to debug memory
+  lda $0102,X                  ; Get copy of X register from stack
+  sta XREG                     ; Store X register to debug memory
+  lda $0101,X                  ; Get copy of Y register from stack
+  sta YREG                     ; Store Y register to debug memory
+  lda $0104,X                  ; Get copy of Status register from stack
+  sta Status                   ; Store Status register to debug memory
+  lda $0105,X                  ; Get Program Counter low byte from stack
+  sta PC_Low                   ; Store Program Counter to debug memory
+  lda $0106,X                  ; Get Program Counter high byte from stack
+  sta PC_High                  ; Store Program Counter to debug memory
+  lda #$00                     ; setup new return address to point to monitor ROM
+  sta $0105,X                  ; put new return low byte on stack
+  lda #$FF                     ; setup new return address to point to monitor ROM
+  sta $0106,X                  ; put new return high byte on stack
+EndBRK:
+  pla                          ; Pop A(really Y) from stack 
+  tay                          ; Move A to Y
+  pla                          ; Pop A(really X) from stack
+  tax                          ; Move A to X
+  pla                          ; Pop  A
+  rti                          ; Return to monitro ROM
+DoIRQ
+  jmp ($02FE)                  ; Jump to IRQ vector in RAM, default will jump back to IRQ_Exit
+
+
+
 IRQ_Exit:
   rti
+
+
+NMI:
+  jmp ($02FC)                  ; MNI vector in RAM, default will jump back to IRQ_Exit
 
 
 KeypadArray:                   ; Converts keypad row/col to hex digits or control codes
@@ -1456,6 +1518,7 @@ Array_7seg:                    ; Which bits are needed for 7 segment display
  .org $ff90
   jmp BootStrap                ; Load file and run it.
 
- .org $fffc
+ .org $FFFA
+ .word NMI
  .word Reset
  .word IRQ
