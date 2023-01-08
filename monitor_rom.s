@@ -605,9 +605,9 @@ CMD8_OK:
   jmp SD_Card_Error            ; If R7 byte 5 is not $AA then return error
 CMD55:
   lda #$20                     ; Only go around 32 times
-  sta ZP_Counter               ; Setup counter
+  sta ZP_Counter16             ; Setup counter
 CMD55_Loop:
-  dec ZP_Counter               ; Decremnet counter
+  dec ZP_Counter16             ; Decremnet counter
   bne SendCMD55_ACMD41         ; If Counter is not zero then send CMD55
   jmp SD_Card_Error            ; After 32 time around we stop with error
 SendCMD55_ACMD41:
@@ -765,6 +765,10 @@ CMD17:
   lda #$FF                     ; Setup fake CRC, CRC is not needed at this point
   jsr SPI_Write_Byte           ; Send CRC byte
   jsr SD_Card_Result           ; Wait for R1 result code
+  and #$FE                     ; keep only to bits
+  cmp #$00                     ; check that we have no error
+  beq CMD17_StartToken         ; If no error then wait for start token
+  jmp SD_Card_Error            ; if error then exit read sector
 CMD17_StartToken:
   jsr SPI_Read_Byte            ; Read Start Token byte
   cmp #$FE                     ; Check if start token $FE has been read
@@ -1184,7 +1188,10 @@ LBA_Addr:                      ; Calculates LBA sector from cluster address.
   lda ClusterNum               ; Get next byte of cluster
   sbc #$00                     ; Subtract 00 to deal with borrow
   sta CurrentSector            ; Store sector number
-  lda SecPerCluster            ; Get how many sectors per cluster, always a multiple of 2 
+  lda SecPerCluster            ; Get how many sectors per cluster, always a multiple of 2
+  cmp #$00                     ; Ensure we have a valid Sectors per cluster
+  bne SectorMultiplyLoop       ; If we have a valid sectors per cluster then do the math
+  jmp LBAError                 ; Return an error
 SectorMultiplyLoop:            ; Multiply number of sectors per cluster by cluster
   lsr                          ; Shift Sectors per cluster to get carry
   bcs SectorMultiplyDone       ; If carry set then we have gone around enough times
@@ -1210,6 +1217,11 @@ SectorMultiplyDone:
   lda #$01                     ; Reset index to 01
   sta SectorIndex              ; Reset sector index to 01
   rts
+
+LBAError:
+  lda #$FF                     ; Error LBA invalid.
+  sta ErrorCode                ; Set error
+  rts                          ; Return with error.
 
 
 GetRandomByte:
