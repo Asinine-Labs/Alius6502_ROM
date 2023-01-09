@@ -1407,6 +1407,18 @@ DoIRQ
   jmp ($02FE)                  ; Jump to IRQ vector in RAM, default will jump back to IRQ_Exit
 
 
+Continue:                      ; This resumes execution after a BRK
+  lda PC_High                  ; Get Program Count High byte
+  pha                          ; Push Program count High byte to stack
+  lda PC_Low                   ; Get Program Count Low byte
+  pha                          ; Push Program count Low byte to stack
+  lda Status                   ; Get CPU status from debug memory
+  pha                          ; Push to stack
+  lda AREG                     ; Restore value of A register
+  ldx XREG                     ; Restore value of X register
+  ldy YREG                     ; Restore value of Y register
+  rti                          ; Return to execution
+
 
 IRQ_Exit:
   rti
@@ -1514,6 +1526,9 @@ Array_7seg:                    ; Which bits are needed for 7 segment display
   jmp GetNextSector            ; Increments sector number, goes to FAT for next cluster if needed
  .org $ff84
   jmp FindNextCluster          ; Find next cluster from FAT
+
+ .org $FFAA
+  jmp Continue                 ; Resume execution from after BRK
 
  .org $ff90
   jmp BootStrap                ; Load file and run it.
