@@ -1,3 +1,7 @@
+; This program will produce 3 random bytes and show them on the display forever
+; To download this program click "Raw", and then press Ctrl+S to save the file.
+
+
 ZP_Display = $D0  ; D0,D1,D2 ; WARNING: Right to Left.
 RandSeed = $0201  ; $0201, $0202
 GetRandomByte = $FF20

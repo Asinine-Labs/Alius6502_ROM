@@ -1,3 +1,7 @@
+; This is a simple program that starts from 0 and increments by one
+; To download this program click "Raw", and then press Ctrl+S to save the file. 
+ 
+ 
   .org $1000
 
 start:

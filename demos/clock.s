@@ -1,3 +1,8 @@
+; This program is a simple clock that starts counting from whenever you strt the program.
+; To download this program click "Raw", and then press Ctrl+S to save the file.
+
+
+
 PORTB = $8010 
 PORTA = $8011 
 DDRB = $8012
