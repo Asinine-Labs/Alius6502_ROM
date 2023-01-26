@@ -1,3 +1,9 @@
+; This program genarates a random byte from $00 (0) to $FF (255) and asks for the user's guess.
+; If the guess is too high, then it will flash the top lights on all 6 7 segment displays.
+; If the guess is too low, then it will flash the bottom lights on all 6 7 segment displays.
+; To download this example, Clcik "Raw", and then press Ctrl+S to save the file.
+; Compile this program with "vasm6502_oldstyle.exe -Fbin -dotdir numGuess.s".
+
 
 Sleep_Long = $FF30
 SPI_Unselect_7seg = $FF5C

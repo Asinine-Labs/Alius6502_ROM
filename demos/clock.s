@@ -1,3 +1,7 @@
+; This program is just a simple clock and starts counting when you turn it on.
+; To download this 
+
+
 PORTB = $8010 
 PORTA = $8011 
 DDRB = $8012
