@@ -18,6 +18,7 @@ The code is written in 6502 assembly and it's designed to compile with vasm http
 &nbsp;&nbsp;Finally, download or craete your own program using Notepad/Notepad++
 
 ### **Linux**
+Use these commands to download vasm, unzip it, and make it executable.
  ```bash
 wget http://sun.hasenbraten.de/vasm/download/vasm_6502_oldstyle/1.4b/Linux_386/vasm6502_oldstyle.gz
 gzip -d vasm6502_oldstyle.gz
