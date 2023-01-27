@@ -6,16 +6,31 @@ Alius 6502 is a simple computer based on a 6502 CPU.
 
 The code is written in 6502 assembly and it's designed to compile with vasm http://sun.hasenbraten.de/vasm/.
 
-To get the correct executable, click "Last Release Binaries", and then click on the "vasm6502_oldstyle_Win64.zip".
+### **Windows**
+&nbsp;&nbsp;To get the correct executable, click "Last Release Binaries", and then click on the "vasm6502_oldstyle_Win64.zip".
 
- Unzip it, and then move the folder "vasm6502_oldstyle_Win64" to your Desktop for easy acess.
+&nbsp;&nbsp;Unzip it, and then move the folder "vasm6502_oldstyle_Win64" to your Desktop for easy acess.
 
- Next, open the "vasm6502_oldstyle_Win64" folder on your Desktop, and in the address bar, type in "cmd".
+&nbsp;&nbsp;Next, open the "vasm6502_oldstyle_Win64" folder on your Desktop, and in the address bar, type in "cmd".
 
- This will open the command prompt in that location.
+&nbsp;&nbsp;This will open the command prompt in that location.
 
- Finally, download or craete your own program using Notepad/Notepad++
+&nbsp;&nbsp;Finally, download or craete your own program using Notepad/Notepad++
 
+### **Linux**
+ ```bash
+wget http://sun.hasenbraten.de/vasm/download/vasm_6502_oldstyle/1.4b/Linux_386/vasm6502_oldstyle.gz
+gzip -d vasm6502_oldstyle.gz
+chmod +x vasm6502_oldstyle
+ ```
+After this, you should move the "vasm6502_oldstyle" file to /usr/bin. 
+
+This will put the binary in your PATH variable, so instead of calling it by ./vasm6502_oldstyle, you can call it just by vasm6502_oldstyle. 
+
+To do this use the following command:
+```bash
+mv vasm6502_oldstyle /usr/bin
+```
 
 ## Compiling
 Once in CMD/Terminal, use this command to compile the source code into machine code.
