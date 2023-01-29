@@ -4,7 +4,7 @@ Alius 6502 is a simple computer based on a 6502 CPU.
 
 ## Installation
 
-The code is written in 6502 assembly and it's designed to compile with vasm http://sun.hasenbraten.de/vasm/.
+The code is written in 6502 assembly and it's designed to compile with vasm/vbcc: http://www.compilers.de/vasm.html
 
 ### **Windows**
 &nbsp;&nbsp;To get the correct executable, click "Last Release Binaries", and then click on the "vasm6502_oldstyle_Win64.zip".
@@ -18,20 +18,26 @@ The code is written in 6502 assembly and it's designed to compile with vasm http
 &nbsp;&nbsp;Finally, download or craete your own program using Notepad/Notepad++
 
 ### **Linux**
-Use these commands to download vasm, unzip it, and make it executable.
- ```bash
-wget http://sun.hasenbraten.de/vasm/download/vasm_6502_oldstyle/1.4b/Linux_386/vasm6502_oldstyle.gz
-gzip -d vasm6502_oldstyle.gz
-chmod +x vasm6502_oldstyle
- ```
-After this, you should move the "vasm6502_oldstyle" file to /usr/bin. 
-
-This will put the binary in your PATH variable, so instead of calling it by ./vasm6502_oldstyle, you can call it just by vasm6502_oldstyle. 
-
-To do this use the following command:
+Use these commands to download and unzip vasm.
 ```bash
-mv vasm6502_oldstyle /usr/bin
+sudo apt install unzip 
+wget http://www.ibaug.de/vbcc/vbcc6502_r3p1.zip
+unzip vbcc6502_r3p1.zip
+cd vbcc6502/vbcc6502_linux/vbcc/bin
 ```
+At this point, you should move vasm6502_oldstyle to /usr/bin to put it in your PATH variable.
+
+To do this use the following command: 
+```bash
+sudo mv vasm6502_oldstyle /usr/bin
+```
+You won't need the "vbcc6502_r3p1.zip" file and "vbcc6502" directory anymore, so assuming the files are in your home directory, here is how to delete them
+```bash
+cd
+rm -rf vbcc6502 vbcc6502_r3p1.zip 
+```
+
+And that's it! vasm should be installed on your system.
 
 ## Compiling
 Once in CMD/Terminal, use this command to compile the source code into machine code.
