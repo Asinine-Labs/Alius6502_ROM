@@ -1,4 +1,3 @@
-; WARNING - This program doesn't compile yet, we are working to solve the issue
 ; This program is a simple clock that starts counting from whenever you strt the program.
 ; To download this program click "Raw", and then press Ctrl+S to save the file.
 
