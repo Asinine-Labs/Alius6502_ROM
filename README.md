@@ -7,7 +7,7 @@ Alius 6502 is a simple computer based on a 6502 CPU.
 The code is written in 6502 assembly and it's designed to compile with vasm http://sun.hasenbraten.de/vasm/.
 
 ### **Windows**
-&nbsp;&nbsp;To get the correct executable, click "Last Release Binaries", and then click on the "vasm6502_oldstyle_Win64.zip".
+&nbsp;&nbsp;To get the correct executable, go to http://sun.hasenbraten.de/vasm, click "Last Release Binaries", and then click on the "vasm6502_oldstyle_Win64.zip".
 
 &nbsp;&nbsp;Unzip it, and then move the folder "vasm6502_oldstyle_Win64" to your Desktop for easy acess.
 
@@ -16,23 +16,27 @@ The code is written in 6502 assembly and it's designed to compile with vasm http
 &nbsp;&nbsp;This will open the command prompt in that location.
 
 &nbsp;&nbsp;Finally, download or craete your own program using Notepad/Notepad++
+And that's it! vasm is now installed on your system.
 
 ### **Linux**
-Use these commands to download vasm, unzip it, and make it executable.
+Use these commands to download vasm, and unzip it.
  ```bash
-wget http://sun.hasenbraten.de/vasm/download/vasm_6502_oldstyle/1.4b/Linux_386/vasm6502_oldstyle.gz
-gzip -d vasm6502_oldstyle.gz
-chmod +x vasm6502_oldstyle
+wget http://www.ibaug.de/vbcc/vbcc_linux_x64.tar.gz
+tar xvzf vbcc_linux_x64.tar.gz
+cd vbcc/bin
  ```
-After this, you should move the "vasm6502_oldstyle" file to /usr/bin. 
-
-This will put the binary in your PATH variable, so instead of calling it by ./vasm6502_oldstyle, you can call it just by vasm6502_oldstyle. 
-
-To do this use the following command:
+In this folder, you will find many files. Ignore them all and just move the file named "vasm6502_oldstyle" to /usr/bin.This will put the binary in your PATH variable, so instead of calling it by ./vasm6502_oldstyle, you can call it just by vasm6502_oldstyle. You may also rename the file to be easily typable. I am NOT renaming the file in this example.
 ```bash
 mv vasm6502_oldstyle /usr/bin
-```
 
+```
+After this, you should remove the "vbcc" dirctory and the "vbcc_linux_x64.tar.gz" file to clean up.
+To do so, use this command.
+```bash
+cd ../..
+rm -rf vbcc vbcc_linux_x64.tar.gz
+```
+And that's it! vasm is now installed on your system.
 ## Compiling
 Once in CMD/Terminal, use this command to compile the source code into machine code.
 
