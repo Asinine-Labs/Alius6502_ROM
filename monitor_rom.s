@@ -5,7 +5,7 @@
 ;   Memory Map
 ;   $0000 -> $00FF - Zero page, some bytes used from fast access data, counters, pointers
 ;   $0100 -> $01FF - Stack
-;   $0200 -> $02FF - Used by system for assorted FAT23 info, counters, pointers 
+;   $0200 -> $02FF - Used by system for assorted FAT32 info, counters, pointers 
 ;   $0300 -> $04FF - Used by FAT32 code, buffer for sectors during Directory and Cluster search 
 ;   $0500 -> $7FFF - User space RAM
 ;   $8000 -> $9FFF - I/O
