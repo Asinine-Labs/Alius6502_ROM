@@ -37,6 +37,10 @@ To do so, use this command.
 cd ../..
 rm -rf vbcc vbcc_linux_x64.tar.gz
 ```
+You can string these commands together as follows:
+```bash
+wget http://www.ibaug.de/vbcc/vbcc_linux_x64.tar.gz&&tar xvzf vbcc_linux_x64.tar.gz&&cd vbcc/bin&&mv vasm6502_oldstyle /usr/bin&&cd ../..&&rm -rf vbcc vbcc_linux_x64.tar.gz
+```
 And that's it! vasm is now installed on your system.
 ## Compiling
 Once in CMD/Terminal, use this command to compile the source code into machine code.
