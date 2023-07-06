@@ -619,7 +619,7 @@ CMD8_OK:
   beq CMD55                    ; If R7 byte 5 is $AA then move on to CMD55
   jmp SD_Card_Error            ; If R7 byte 5 is not $AA then return error
 CMD55:
-  lda #$20                     ; Only go around 32 times
+  lda #$40                     ; Only go around 64 times
   sta ZP_Counter16             ; Setup counter
 CMD55_Loop:
   dec ZP_Counter16             ; Decremnet counter
