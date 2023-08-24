@@ -30,7 +30,7 @@ ZP_Counter16 = $FC             ; 16 bit counter, 2 bytes including $FC,$FD
 ; FAT32 pointers and counters
 ZP_SectorBufPTR = $FA          ; 2 bytes including FA,FB
 ZP_DIRRecordPTR = $F8          ; 2 bytes including F8,F9
-ZP_SectorReadSize = $F6        ; 2 bytes including F6,F7
+ZP_SectorSize = $F6            ; 2 bytes including F6,F7
 ; Content and display mask for the 7 segment display
 ZP_DisplayMask = $D3           ; D3,D4,D5,D6,D7,D8 
 ZP_Display = $D0               ; D0,D1,D2 
@@ -54,14 +54,18 @@ MonitorMode = $0208            ; Current mode of monitor
 ; FAT32 support data
 CurrentSector = $0209          ; 4 bytes including 0209,020A,020B,020C
 ClusterBeginLBA = $020D        ; 4 bytes including 020D,020E,020F,0210
-FATBeginLBA = $0211            ; 4 bytes including 0211,0212,0213,0214
-SecPerCluster = $0215          ; How many sectors per cluster.
-SectorIndex = $0216            ; Which sector of the current cluster
-RootDirCluster = $0217         ; 4 bytes including 0217,0218,0219,021A
-ClusterNum = $021B             ; 4 bytes including 021B,021C,021D,021E
-ClusterTemp = $021F            ; Used as part of next cluster math
-SectorTemp  = $0220            ; 4 bytes including 0220,0221,0222,0223
-SDHCFlag = $0224               ; Flag to show if we have an SDHC card
+SecPerCluster = $0211          ; How many sectors per cluster.
+SectorIndex = $0212            ; Which sector of the current cluster
+RootDirCluster = $0213         ; 4 bytes including 0213,0214,0215,0216
+ClusterNum = $0217             ; 4 bytes including 0217,0218,0219,021A
+SectorTemp  = $021B            ; 4 bytes including 021B,021C,021D,021E
+SDHCFlag = $021F               ; Flag to show if we have an SDHC card
+ClusterTemp = $0220            ; 4 bytes including 0220,0221,0222,0223
+FAT1BeginLBA = $0224           ; 4 bytes including 0224,0225,0226,0227
+FAT2BeginLBA = $0228           ; 4 bytes including 0228,0229,022A,022B
+FATsize = $022C                ; 4 bytes including 022C,022D,022E,022F
+TempByte = $0230               ; Temp byte
+
 
 ; Used for loading of files form SDcard.
 FileNumber = $0250             ; File Number to create FileName
@@ -69,6 +73,9 @@ FileName = $0251               ; File Name to load
 FileSize = $025D               ; File Size, 2 bytes including $025D(LSB) ,$025E(MSB)
 SectorCount = $025F            ; Number of whole sectors needed to load
 LoadAddrPTR = $0260            ; Address pointer - Where to load file, $0260(LSB),$0261(MSB)
+FileFirstCluster = $0262       ; 4 bytes including 0262,0263,0264,0265
+BytesToWrite = $0266           ; 2 bytes including 0266,0267
+
 
 ; Debug CPU status.
 AREG = $0270                   ; Value of A register
@@ -724,10 +731,11 @@ EndSDInit
 
 
 SD_Card_Read_Sector:           ; Reads a sector to location pointed to by ZP_SectorBufPTR
-  lda ZP_SectorReadSize        ; Get bytes to read - LSB
+  jsr Sector_Math
+  lda ZP_SectorSize            ; Get bytes to read - LSB
   cmp #$00                     ; Check if size to load is 00
   bne CMD17_Setup              ; If not 00 then go read sector
-  lda ZP_SectorReadSize+1      ; Get bytes to read - LSB
+  lda ZP_SectorSize+1          ; Get bytes to read - LSB
   cmp #$00                     ; Check if size to load is 00
   bne CMD17_Setup              ; If not 00 then go read sector
   jmp CMD17_Cleanup            ; Nothing to read, so exit 
@@ -737,33 +745,6 @@ CMD17_Setup:
   jsr SPI_Select_SDcard        ; Select the SD card
   lda #$FF                     ; Setup $FF junk byte
   jsr SPI_Write_Byte           ; Send junk after CS_ change
-SetupSector:
-  lda CurrentSector            ; Move current sector to a temp locaton to preserve it.
-  sta SectorTemp               ; Move current sector to a temp locaton to preserve it.
-  lda CurrentSector+1          ; Move current sector to a temp locaton to preserve it.
-  sta SectorTemp+1             ; Move current sector to a temp locaton to preserve it.
-  lda CurrentSector+2          ; Move current sector to a temp locaton to preserve it.
-  sta SectorTemp+2             ; Move current sector to a temp locaton to preserve it.
-  lda CurrentSector+3          ; Move current sector to a temp locaton to preserve it.
-  sta SectorTemp+3             ; Move current sector to a temp locaton to preserve it.
-Check_SDHC:
-  lda #$00                     ; Standard SD card will have a Flag of 00, SDHC will be $40
-  cmp SDHCFlag                 ; Check if we have a SDHC card or not.
-  bne CMD17                    ; SDHC card means we just read sector with CMD17
-SD_Math:                       ; Standard SD card need sector converted to bytes.
-  lda CurrentSector+3          ; Move sector by one whole byte to get * 256
-  sta SectorTemp+2             ; Move sector by one whole byte to get * 256
-  lda CurrentSector+2          ; Move sector by one whole byte to get * 256
-  sta SectorTemp+1             ; Move sector by one whole byte to get * 256
-  lda CurrentSector+1          ; Move sector by one whole byte to get * 256
-  sta SectorTemp               ; Move sector by one whole byte to get * 256
-  lda #$00                     ; Move sector by one whole byte to get * 256
-  sta SectorTemp+3             ; Move sector by one whole byte to get * 256
-  clc                          ; Clear carry before the rotate
-  rol SectorTemp+3             ; Rotate left to get a mul * 2
-  rol SectorTemp+2             ; Rotate left to get a mul * 2
-  rol SectorTemp+1             ; Rotate left to get a mul * 2
-  rol SectorTemp               ; Rotate left to get a mul * 2
 CMD17:
   lda #$FF                     ; Setup $FF junk byte
   jsr SPI_Write_Byte           ; Send $FF junk before CMD
@@ -804,10 +785,10 @@ IncBytesRead:
   bne CheckForSize             ; If not zero then go check if we are at end of size to read
   inc ZP_Counter16+1           ; Increment counter high byte
 CheckForSize:                  ; Check if we are at end of buffer
-  lda ZP_SectorReadSize        ; Get bytes to read - low byte  
+  lda ZP_SectorSize            ; Get bytes to read - low byte  
   cmp ZP_Counter16             ; Check bytes read - low byte
   bne CMD17_ReadBytes          ; If not at end then go read more bytes
-  lda ZP_SectorReadSize+1      ; Get bytes to read - high byte  
+  lda ZP_SectorSize+1          ; Get bytes to read - high byte  
   cmp ZP_Counter16+1           ; Check bytes read - high byte  
   bne CMD17_ReadBytes          ; If not at end then go read more bytes
 ReadJunkLoop:                  ; Reads any extra bytes if this was a partial sector read
@@ -835,6 +816,78 @@ CMD17_Cleanup:
   rts
 
 
+
+
+SD_Card_Write_Sector:
+  jsr Sector_Math              ; Go calculate Sector for SDHC vs SD
+  lda #$FF                     ; Setup $FF junk byte
+  jsr SPI_Write_Byte           ; Send $FF junk before CS_ change
+  jsr SPI_Select_SDcard        ; Select the SD card
+  lda #$FF                     ; Setup $FF junk byte
+  jsr SPI_Write_Byte           ; Send junk after CS_ change
+CMD24:
+  lda #$FF                     ; Setup $FF junk byte
+  jsr SPI_Write_Byte           ; Send $FF junk before CMD
+  lda #$58                     ; Setup CMD24
+  jsr SPI_Write_Byte           ; Send CMD24 byte
+  lda SectorTemp               ; Get LBA Sector byte 0
+  jsr SPI_Write_Byte           ; Send LBA Sector byte 0
+  lda SectorTemp+1             ; Get LBA Sector byte 1
+  jsr SPI_Write_Byte           ; Send LBA Sector byte 1
+  lda SectorTemp+2             ; Get LBA Sector byte 2
+  jsr SPI_Write_Byte           ; Send address byte 2
+  lda SectorTemp+3             ; Get LBA Sector byte 3
+  jsr SPI_Write_Byte           ; send address byte 3
+  lda #$FF                     ; Fake CRC FF
+  jsr SPI_Write_Byte           ; Send Fake CRC byte
+  jsr SD_Card_Result           ; Wait for R1 result code
+  and #$FE                     ; keep only to bits
+  cmp #$00                     ; check that we have no error
+  beq WriteSector
+  jmp SD_Card_Error            ; if error then exit read sector
+WriteSector:
+  lda #$FE                     ; Start token
+  jsr SPI_Write_Byte           ; Send Start token byte
+  lda #$00                     ; Set counter to 00 
+  sta ZP_Counter16             ; Setup 16 bit counter
+  sta ZP_Counter16+1           ; Setup 16 bit counter
+CMD24_WriteBytes:
+  ldy #$00                     ; set $00 offset for the pointer
+  lda (ZP_SectorBufPTR),y      ; get byte from memory
+  jsr SPI_Write_Byte           ; Send byte of  data
+  inc ZP_SectorBufPTR          ; Increment buffer pointer low byte
+  bne IncBytesWritten          ; If not zero then increment bytes counter
+  inc ZP_SectorBufPTR+1        ; Increment buffer pointer high byte
+IncBytesWritten:
+  inc ZP_Counter16             ; Increment counter low byte
+  bne CheckWriteSize           ; If not zero then check if write is done.
+  inc ZP_Counter16+1           ; Incremnet counter high byte
+CheckWriteSize:
+  lda #$00
+  cmp ZP_Counter16
+  bne CMD24_WriteBytes
+  lda #$02
+  cmp ZP_Counter16+1 
+  bne CMD24_WriteBytes
+CMD24_CheckWriteValid:
+  jsr SD_Card_Result           ; Wait for R1 result code
+  and #$1F
+  cmp #$05
+  beq CMD24_Cleanup
+  jmp SD_Card_Error            ; if error then exit read sector
+CMD24_Cleanup:
+  jsr SD_Card_Result           ; Wait for R1 result code
+  cmp #$00
+  beq CMD24_Cleanup
+  lda #$FF                     ; Setup junk byte
+  jsr SPI_Write_Byte           ; Send junk before CS_ change
+  jsr SPI_Unselect_SDcard      ; Unselect the SD card.
+  lda #$FF                     ; Setup junk byte
+  jsr SPI_Write_Byte           ; Send junk after CS_ change
+  rts
+
+
+
 SD_Card_Mount:                 ; Reads Boot Sector and Patition table to setup SDcard.
   lda #$00                     ; Setup to read sector 00
   sta CurrentSector            ; MSB of sector
@@ -846,9 +899,9 @@ SD_Card_Mount:                 ; Reads Boot Sector and Patition table to setup S
   lda #$03                     ; Setup to read sector to $0300 
   sta ZP_SectorBufPTR+1        ; Set buffer start pointer High byte
   lda #$00                     ; Setup to read $200 bytes
-  sta ZP_SectorReadSize        ; Set buffer end pointer Low byte
+  sta ZP_SectorSize            ; Set buffer end pointer Low byte
   lda #$02                     ; Setup to read $200 bytes
-  sta ZP_SectorReadSize+1      ; Set buffer end pointer High byte
+  sta ZP_SectorSize+1          ; Set buffer end pointer High byte
   jsr SD_Card_Read_Sector      ; Read sector 00
   lda $04FE                    ; Check Boot Sector marker at $01FE of sector (loaded at $0300) 
   cmp #$55                     ; Check Boot Sector marker of $55
@@ -880,23 +933,44 @@ ReadPartition:
   lda #$03                     ; Setup to read sector to $0300 
   sta ZP_SectorBufPTR+1        ; Store High byte of start buffer pointer
   lda #$00                     ; Setup to read $200 bytes
-  sta ZP_SectorReadSize        ; Store Low byte of end of buffer pointer
+  sta ZP_SectorSize            ; Store Low byte of end of buffer pointer
   lda #$02                     ; Setup to read $200 bytes
-  sta ZP_SectorReadSize+1      ; Store High byte of end of buffer pointer
+  sta ZP_SectorSize+1          ; Store High byte of end of buffer pointer
   jsr SD_Card_Read_Sector      ; Read patition table
   clc                          ; Clear carry before add
   lda CurrentSector+3          ; Load partition table sector LSB
   adc $030E                    ; Add reserved sectors to LBA begin to get FAT begin
-  sta FATBeginLBA+3            ; Store the begining of FAT (begining of partition + reserved sectors)
+  sta FAT1BeginLBA+3           ; Store the begining of FAT (begining of partition + reserved sectors)
   lda CurrentSector+2          ; Load partition table sector next byte
   adc $030F                    ; Add reserved sectors to LBA begin to get FAT begin
-  sta FATBeginLBA+2            ; Store the begining of FAT (begining of partition + reserved sectors)
+  sta FAT1BeginLBA+2           ; Store the begining of FAT (begining of partition + reserved sectors)
   lda CurrentSector+1          ; Load partition table sector next byte
   adc #$0                      ; Add reserved sectors to LBA begin to get FAT begin.
-  sta FATBeginLBA+1            ; Store the begining of FAT (begining of partition + reserved sectors)
+  sta FAT1BeginLBA+1           ; Store the begining of FAT (begining of partition + reserved sectors)
   lda CurrentSector            ; Load partition table sector MSB
   adc #$00                     ; Add reserved sectors to LBA begin to get FAT begin.
-  sta FATBeginLBA              ; Store the begining of FAT (begining of partition + reserved sectors)
+  sta FAT1BeginLBA             ; Store the begining of FAT (begining of partition + reserved sectors)
+  lda $0324                    ; Get sectors per FAT
+  sta FATsize+3                ; Store Size of FAT
+  lda $0325                    ; Get sectors per FAT
+  sta FATsize+2                ; Store Size of FAT
+  lda $0326                    ; Get sectors per FAT
+  sta FATsize+1                ; Store Size of FAT
+  lda $0327                    ; Get sectors per FAT
+  sta FATsize                  ; Store Size of FAT
+  clc                          ; clear carry before add
+  lda FAT1BeginLBA+3           ; get FAT1 LSB
+  adc FATsize+3                ; add sectors per FAT
+  sta FAT2BeginLBA+3           ; Store to FAT2 begin
+  lda FAT1BeginLBA+2           ; get FAT1 LSB
+  adc FATsize+2                ; add sectors per FAT
+  sta FAT2BeginLBA+2           ; Store to FAT2 begin
+  lda FAT1BeginLBA+1           ; get FAT1 LSB
+  adc FATsize+1                ; add sectors per FAT
+  sta FAT2BeginLBA+1           ; Store to FAT2 begin
+  lda FAT1BeginLBA             ; get FAT1 LSB
+  adc FATsize                  ; add sectors per FAT
+  sta FAT2BeginLBA             ; Store to FAT2 begin
 ClusterBegin:                  ; Get Sectors per FAT, then * 2, then add FAT bagin to get ClusterBegin.
   lda $0327                    ; Get Sectors per FAT
   sta ClusterBeginLBA          ; Store Sectors per FAT, using ClusterBegiaLBA as temp location 
@@ -912,16 +986,16 @@ ClusterBegin:                  ; Get Sectors per FAT, then * 2, then add FAT bag
   rol ClusterBeginLBA+1        ; Sectors per FAT * 2
   rol ClusterBeginLBA          ; Sectors per FAT * 2 (MSB)
   clc                          ; Clear carry before adding FAT begin and size of FAT
-  lda FATBeginLBA+3            ; Get FAT begin
+  lda FAT1BeginLBA+3           ; Get FAT begin
   adc ClusterBeginLBA+3        ; Add Size of FAT (Sectors per FAT * 2)
   sta ClusterBeginLBA+3        ; Store cluster begin
-  lda FATBeginLBA+2            ; Get FAT begin
+  lda FAT1BeginLBA+2           ; Get FAT begin
   adc ClusterBeginLBA+2        ; Add Size of FAT (Sectors per FAT * 2)
   sta ClusterBeginLBA+2        ; Store cluster begin
-  lda FATBeginLBA+1            ; Get FAT begin
+  lda FAT1BeginLBA+1           ; Get FAT begin
   adc ClusterBeginLBA+1        ; Add Size of FAT (Sectors per FAT * 2)
   sta ClusterBeginLBA+1        ; Store cluster begin
-  lda FATBeginLBA              ; Get FAT begin
+  lda FAT1BeginLBA             ; Get FAT begin
   adc ClusterBeginLBA          ; Add Size of FAT (Sectors per FAT * 2)
   sta ClusterBeginLBA          ; Store cluster begin
   lda $030D                    ; Get sectors per cluster from partition table
@@ -943,8 +1017,6 @@ BootSecError:
   rts                          ; Return
 
 
-SD_Card_Write_Sector:          ; Writes one block to SD_Card.
-  rts
 
 
 SD_Card_Error:                 ; Clean up SPI/SDcard things and return an error
@@ -986,9 +1058,9 @@ FindFile:
   lda #$03                     ; Setup to read sector to $0300 
   sta ZP_SectorBufPTR+1        ; Setup to read sector to $0300
   lda #$00                     ; Setup to read $200 bytes
-  sta ZP_SectorReadSize        ; Setup to read $200 bytes
+  sta ZP_SectorSize            ; Setup to read $200 bytes
   lda #$02                     ; Setup to read $200 bytes
-  sta ZP_SectorReadSize+1      ; Setup to read $200 bytes
+  sta ZP_SectorSize+1          ; Setup to read $200 bytes
   jsr SD_Card_Read_Sector      ; Read the DIR sector to $0300
 CheckSector:                   ; Search whole sector
   lda #$00                     ; Save ptr to DIR $0300
@@ -1046,15 +1118,15 @@ NextRecord:
   lda #$03                     ; Setup to read sector to $0300 
   sta ZP_SectorBufPTR+1        ; Setup to read sector to $0300
   lda #$00                     ; Setup to read $200 bytes
-  sta ZP_SectorReadSize        ; Setup to read $200 bytes
+  sta ZP_SectorSize            ; Setup to read $200 bytes
   lda #$02                     ; Setup to read $200 bytes
-  sta ZP_SectorReadSize+1      ; Setup to read $200 bytes
+  sta ZP_SectorSize+1          ; Setup to read $200 bytes
   jsr SD_Card_Read_Sector      ; Read the DIR sector to $0300
   lda #$00                     ; Check error after reading sector
   cmp ErrorCode                ; If no more sectors, then file not found
   beq CheckSector              ; Go search new sector
 FileNotFound:
-  lda #$FF                     ; Return error
+  lda #$02                     ; Return error
   sta ErrorCode                ; Return error
   rts
 
@@ -1090,17 +1162,17 @@ GotNextSector:
 
 
 FindNextCluster:
-  lda FATBeginLBA              ; Copy FAT begin to sector 
+  lda FAT1BeginLBA             ; Copy FAT begin to sector 
   sta CurrentSector            ; Copy FAT begin to sector
-  lda FATBeginLBA+1            ; Copy FAT begin to sector
+  lda FAT1BeginLBA+1           ; Copy FAT begin to sector
   sta CurrentSector+1          ; Copy FAT begin to sector
-  lda FATBeginLBA+2            ; Copy FAT begin to sector
+  lda FAT1BeginLBA+2           ; Copy FAT begin to sector
   sta CurrentSector+2          ; Copy FAT begin to sector
-  lda FATBeginLBA+3            ; Copy FAT begin to sector
+  lda FAT1BeginLBA+3           ; Copy FAT begin to sector
   sta CurrentSector+3          ; Copy FAT begin to sector
   lda ClusterNum+3             ; Keep lower 7 bits of cluster number for later
   and #$7F                     ; Mask off top bit to keep lower 7 bits for later
-  sta ClusterTemp              ; Store lower 7 bits for later
+  sta TempByte                 ; Store lower 7 bits for later
 ; Each FAT entery is 4 bytes, so 128 entries per sector.
 ; So we want to divide the Cluster number by 128, then add FAT begin.
 ; This divide could be done by Rotate Right 7 times.
@@ -1129,14 +1201,14 @@ FindNextCluster:
   lda #$03                     ; Setup to read FAT to $0300 
   sta ZP_SectorBufPTR+1        ; Setup to read FAT to $0300
   lda #$00                     ; Setup to read $200 bytes
-  sta ZP_SectorReadSize        ; Setup to read $200 bytes
+  sta ZP_SectorSize            ; Setup to read $200 bytes
   lda #$02                     ; Setup to read $200 bytes
-  sta ZP_SectorReadSize+1      ; Setup to read $200 bytes
+  sta ZP_SectorSize+1          ; Setup to read $200 bytes
   jsr SD_Card_Read_Sector      ; Read FAT to $0300
   lda #$00                     ; Zero out offset into FAT
   sta ZP_DIRRecordPTR          ; Zero out offset into FAT
   sta ZP_DIRRecordPTR+1        ; Zero out offset into FAT
-  lda ClusterTemp              ; Get the lower 7 bits we stored earlert which record in the FAT we need
+  lda TempByte                 ; Get the lower 7 bits we stored earlert which record in the FAT we need
   sta ZP_DIRRecordPTR          ; Store the lower 7 bits to the pointer 
   clc                          ; Clear carry for rotate
   rol ZP_DIRRecordPTR          ; Mul*2
@@ -1187,6 +1259,40 @@ EndCluster:
   lda #$FF                     ; Error no more clusters.
   sta ErrorCode                ; Set error
   rts                          ; Return with error
+
+
+
+Sector_Math:
+  lda CurrentSector            ; Move current sector to a temp locaton to preserve it.
+  sta SectorTemp               ; Move current sector to a temp locaton to preserve it.
+  lda CurrentSector+1          ; Move current sector to a temp locaton to preserve it.
+  sta SectorTemp+1             ; Move current sector to a temp locaton to preserve it.
+  lda CurrentSector+2          ; Move current sector to a temp locaton to preserve it.
+  sta SectorTemp+2             ; Move current sector to a temp locaton to preserve it.
+  lda CurrentSector+3          ; Move current sector to a temp locaton to preserve it.
+  sta SectorTemp+3             ; Move current sector to a temp locaton to preserve it.
+Check_SDHC:
+  lda #$00                     ; Standard SD card will have a Flag of 00, SDHC will be $40
+  cmp SDHCFlag                 ; Check if we have a SDHC card or not.
+  bne Sector_Math_Done         ; SDHC card means we just go with sector as in temp
+SD_Math:                       ; Standard SD card need sector converted to bytes.
+  lda CurrentSector+3          ; Move sector by one whole byte to get * 256
+  sta SectorTemp+2             ; Move sector by one whole byte to get * 256
+  lda CurrentSector+2          ; Move sector by one whole byte to get * 256
+  sta SectorTemp+1             ; Move sector by one whole byte to get * 256
+  lda CurrentSector+1          ; Move sector by one whole byte to get * 256
+  sta SectorTemp               ; Move sector by one whole byte to get * 256
+  lda #$00                     ; Move sector by one whole byte to get * 256
+  sta SectorTemp+3             ; Move sector by one whole byte to get * 256
+  clc                          ; Clear carry before the rotate
+  rol SectorTemp+3             ; Rotate left to get a mul * 2
+  rol SectorTemp+2             ; Rotate left to get a mul * 2
+  rol SectorTemp+1             ; Rotate left to get a mul * 2
+  rol SectorTemp               ; Rotate left to get a mul * 2
+Sector_Math_Done:
+  rts
+
+
 
 
 LBA_Addr:                      ; Calculates LBA sector from cluster address.
@@ -1277,9 +1383,9 @@ LoadFileLoop:                  ; Top of loop that read file one sector at a time
   beq LoadPartSector           ; Number of whole sectors is zero so load part sector
 LoadWholeSector:               ; If whole sector to read then read whole sector
   lda #$00                     ; Setup to read whole $0200 sector
-  sta ZP_SectorReadSize        ; Setup Read Size low byte
+  sta ZP_SectorSize            ; Setup Read Size low byte
   lda #$02                     ; Setup to read whole $0200 sector
-  sta ZP_SectorReadSize+1      ; Setup Read Size high byte
+  sta ZP_SectorSize+1          ; Setup Read Size high byte
   jsr SD_Card_Read_Sector      ; Read Sector
   lda FileSize+1               ; Subtract $0200 from file size
   sec                          ; Set carry before subtract
@@ -1294,9 +1400,9 @@ LoadWholeSector:               ; If whole sector to read then read whole sector
 
 LoadPartSector:                ; Load remainder of sector
   lda FileSize                 ; Setup to read whole $0200 sector
-  sta ZP_SectorReadSize        ; Setup Read Size low byte
+  sta ZP_SectorSize            ; Setup Read Size low byte
   lda FileSize+1               ; Setup to read whole $0200 sector
-  sta ZP_SectorReadSize+1      ; Setup Read Size high byte
+  sta ZP_SectorSize+1          ; Setup Read Size high byte
   jsr SD_Card_Read_Sector      ; Read Sector
 FileLoaded:
   lda #$00                     ; File Loaded
@@ -1306,6 +1412,339 @@ LoadError:
   lda #$FF                     ; File Not Loaded
   sta ErrorCode                ; Return Error
   rts                          ; Return Error
+
+
+
+WriteFile:
+  jsr FindFile
+  lda #$02                     ; 02 is File not found, so we are good to save file
+  cmp ErrorCode                ; Check if our error code is 02
+  bne WriteFileError           ; dont write file, return error
+  lda FileSize                 ; Move file size to Bytes to write counter
+  sta BytesToWrite             ; Move file size to Bytes to write counter
+  lda FileSize+1               ; Move file size to Bytes to write counter
+  sta BytesToWrite+1           ; Move file size to Bytes to write counter
+  ; TODO HERE - Check Dir for duplicate file name.
+  jsr LoadFAT                  ; Load a copy of the FAT tp $0500
+  lda #$FF                     ; Set marker to show we have no previous cluster.
+  sta ClusterNum               ; Store $FF in MSB of ClusterNum to show we are first in chain.
+  jsr FindFreeCluster          ; Find our first free cluster
+  jsr LBA_Addr                 ; Get Sector number for the first cluster 
+  lda ClusterNum               ; Copy the cluster number to First cluster so we have it for the dir entry
+  sta FileFirstCluster         ; Copy the cluster number to First cluster so we have it for the dir entry
+  lda ClusterNum+1             ; Copy the cluster number to First cluster so we have it for the dir entry
+  sta FileFirstCluster+1       ; Copy the cluster number to First cluster so we have it for the dir entry
+  lda ClusterNum+2             ; Copy the cluster number to First cluster so we have it for the dir entry
+  sta FileFirstCluster+2       ; Copy the cluster number to First cluster so we have it for the dir entry
+  lda ClusterNum+3             ; Copy the cluster number to First cluster so we have it for the dir entry
+  sta FileFirstCluster+3       ; Copy the cluster number to First cluster so we have it for the dir entry
+WriteFileLoop:                 ; Write the file to SDcard one sector at a time
+  lda BytesToWrite+1           ; Calculate number of whole sectors needed
+  clc                          ; Clear carry before the rotate right
+  ror                          ; Rotate Right MSB of file size to get number of whole clusters needed
+  sta SectorCount              ; Store the number of whole sectors needed
+  lda LoadAddrPTR              ; Setup Sector buffer pointer based on Load Address (LSB)
+  sta ZP_SectorBufPTR          ; Setup Sector buffer pointer based on Load Address (LSB)
+  lda LoadAddrPTR+1            ; Setup Sector buffer pointer based on Load Address (MSB)
+  sta ZP_SectorBufPTR+1        ; Setup Sector buffer pointer based on Load Address (MSB)
+  lda #$00                     ; Check if one or more whole sectors to write
+  cmp SectorCount              ; Check number of sectors to load 
+  beq WriteLastSector          ; Number of whole sectors is zero so Write last sector
+WriteFileSector:               ; Write a whole sector
+  jsr SD_Card_Write_Sector     ; Write data to SDcard
+  lda BytesToWrite+1           ; Subtract $0200 from file size
+  sec                          ; Set carry before subtract
+  sbc #$02                     ; We only need to subtract from MSB of filesize
+  sta BytesToWrite+1           ; Store FileSize MSB again
+  lda LoadAddrPTR+1            ; Add $0200 to Load Address (MSB)
+  clc                          ; Clear carry before add
+  adc #$02                     ; Add $0200 to file load pointer (MSB)
+  sta LoadAddrPTR+1            ; Store Load address MSB
+  jsr FindNextWriteSector      ; Find the next sector to Write to
+  jmp WriteFileLoop            ; Go around again and write more of the file
+WriteLastSector:               ; Write the last sector
+  jsr SD_Card_Write_Sector     ; Write data to SDcard
+  jsr WriteFAT                 ; Write the FAT back the the SDcard.
+  jsr UpdateDir                ; Add the file to the directory structure.
+  rts
+
+
+
+WriteFileError: 
+  lda #$05                     ; Error 5 - I/O error
+  sta ErrorCode                ; Store error code and return
+  rts
+
+
+
+FindNextWriteSector:           ; Find the next sector to Write to
+  lda SectorIndex              ; Get which sector of this cluster 
+  cmp SecPerCluster            ; Check against number of sectors per cluster
+  bne IncrementWriteSector     ; If we have more sectors in this cluster then just increment sector
+  jsr FindFreeCluster          ; If we are at last sector in this cluster, then go find next cluster
+  jsr LBA_Addr                 ; Calculate the sector address from the cluster number
+  jmp FoundNextWriteSector     ; Return after finding a new sector in the new cluster
+IncrementWriteSector:          ; Increment the sector number within the current cluster
+  inc SectorIndex              ; Increment sector index, which sector with in the cluster
+  clc                          ; Clear carry before add
+  lda #$01                     ; Add 01 to Sector
+  adc CurrentSector+3          ; Add to lower byte of sector number
+  sta CurrentSector+3          ; store new sector number
+  lda #$00                     ; Load 00 for add to deal with carry
+  adc CurrentSector+2          ; Add to next byte
+  sta CurrentSector+2          ; Store next byte
+  lda #$00                     ; Load 00 for add to deal with carry
+  adc CurrentSector+1          ; Add to next byte
+  sta CurrentSector+1          ; Store next byte
+  lda #$00                     ; Load 00 for add to deal with carry
+  adc CurrentSector            ; Add to next byte
+  sta CurrentSector            ; Store next byte
+  lda #$00                     ; Set error to 00
+  sta ErrorCode                ; Return no error
+FoundNextWriteSector:
+  rts
+
+
+
+
+
+
+UpdateDir:
+  lda RootDirCluster           ; Get first directory cluster
+  sta ClusterNum               ; Setup to read first directory cluster
+  lda RootDirCluster+1         ; Get first directory cluster
+  sta ClusterNum+1             ; Setup to read first directory cluster 
+  lda RootDirCluster+2         ; Get first directory cluster
+  sta ClusterNum+2             ; Setup to read first directory cluster
+  lda RootDirCluster+3         ; Get first directory cluster
+  sta ClusterNum+3             ; Setup to read first directory cluster
+  jsr LBA_Addr                 ; Convert cluster number to sector number
+  lda #$00                     ; Setup to read sector to $0300
+  sta ZP_SectorBufPTR          ; Setup to read sector to $0300
+  lda #$03                     ; Setup to read sector to $0300 
+  sta ZP_SectorBufPTR+1        ; Setup to read sector to $0300
+  lda #$00                     ; Setup to read $200 bytes
+  sta ZP_SectorSize            ; Setup to read $200 bytes
+  lda #$02                     ; Setup to read $200 bytes
+  sta ZP_SectorSize+1          ; Setup to read $200 bytes
+  jsr SD_Card_Read_Sector      ; Read the DIR sector to $0300
+  lda #$00                     ; Setup pointer to DIR $0300
+  sta ZP_DIRRecordPTR          ; DIRRecordPTR points to buffer to search
+  lda #$03                     ; Setup pointer to DIR $0300 
+  sta ZP_DIRRecordPTR+1        ; DIRRecordPTR points to buffer to search
+SearchDirFree:                 ; Search the directory for a free entry
+  ldy #$00                     ; Clear the index
+  lda (ZP_DIRRecordPTR),y      ; Load the first byte of the directory entry
+  cmp #$00                     ; Check if its zero
+  beq FoundFreeDirEntry        ; If zero hen its free
+  cmp #$E5                     ; check if its $E5 as thsat also marks as free
+  beq FoundFreeDirEntry        ; If $E5 then its free
+SearchNextRecord:              ; Move up 32 bytes to the next record
+  clc                          ; Clear the carry before we add.
+  lda ZP_DIRRecordPTR          ; Get pointer to Directory record
+  adc #$20                     ; Add $20 to increment Pointer to next record.
+  sta ZP_DIRRecordPTR          ; Store new directory record pointer low byte
+  lda ZP_DIRRecordPTR+1        ; Get high byte of pointer
+  adc #$00                     ; Add zero to deal with overflow
+  sta ZP_DIRRecordPTR+1        ; Store new directory record pointer high byte
+  jmp SearchDirFree            ; Go back and search more.
+FoundFreeDirEntry:             ; Found a free directory entry, lets update it.
+  ldy #$00                     ; Index to bytes of file name
+UpdateAnotherByte:             ; Update the file name one byte at a time
+  lda FileName,y               ; load char at Filename+Y
+  sta (ZP_DIRRecordPTR),y      ; Store it to Buffer+Y 
+  iny                          ; Increment to next byte
+  cpy #$0B                     ; 11 bytes
+  bne UpdateAnotherByte        ; Update all 11 bytes.
+  ldy #$0B                     ; Set index to $0B (File Attribute byte)
+  lda #$00                     ; Attribute byte will be zero
+  sta (ZP_DIRRecordPTR),y      ; Write file attribute byte
+  ldy #$14                     ; Set index to $14 (Cluster high bytes)
+  lda FileFirstCluster+1       ; Get cluster high byte
+  sta (ZP_DIRRecordPTR),y      ; Set cluster high byte in buffer
+  ldy #$15                     ; Set index to $15 (Cluster high bytes)
+  lda FileFirstCluster         ; Get cluster high byte
+  sta (ZP_DIRRecordPTR),y      ; Set cluster high byte in buffer
+  ldy #$1A                     ; Set index to $1A (Cluster low bytes)
+  lda FileFirstCluster+3       ; Get cluster low byte
+  sta (ZP_DIRRecordPTR),y      ; Set cluster low byte in buffer
+  ldy #$1B                     ; Set index to $1B (Cluster low bytes)
+  lda FileFirstCluster+2       ; Get cluster low byte
+  sta (ZP_DIRRecordPTR),y      ; Set cluster low byte in buffer
+  ldy #$1C                     ; Set index to $1C (file size)
+  lda FileSize                 ; get file size
+  sta (ZP_DIRRecordPTR),y      ; Set file size in buffer
+  ldy #$1D                     ; Set index to $1D (file size)
+  lda FileSize+1               ; Get file size 
+  sta (ZP_DIRRecordPTR),y      ; Set file size in buffer
+  lda #$00                     ; Setup to write $0300 back to SDcard
+  sta ZP_SectorBufPTR          ; Setup to write $0300 back to SDcard
+  lda #$03                     ; Setup to write $0300 back to SDcard
+  sta ZP_SectorBufPTR+1        ; Setup to write $0300 back to SDcard
+  jsr SD_Card_Write_Sector     ; Write Directory sector back to SDcard
+  rts
+
+
+
+LoadFAT:
+  lda FAT1BeginLBA             ; Copy FAT begin to current sector 
+  sta CurrentSector            ; Copy FAT begin to current sector
+  lda FAT1BeginLBA+1           ; Copy FAT begin to current sector
+  sta CurrentSector+1          ; Copy FAT begin to current sector
+  lda FAT1BeginLBA+2           ; Copy FAT begin to current sector
+  sta CurrentSector+2          ; Copy FAT begin to current sector
+  lda FAT1BeginLBA+3           ; Copy FAT begin to current sector
+  sta CurrentSector+3          ; Copy FAT begin to current sector
+  lda #$00                     ; Setup to read FAT to $0500
+  sta ZP_SectorBufPTR          ; Setup to read FAT to $0500
+  lda #$05                     ; Setup to read FAT to $0500 
+  sta ZP_SectorBufPTR+1        ; Setup to read FAT to $0500
+  lda #$00                     ; Setup to read $200 bytes
+  sta ZP_SectorSize            ; Setup to read $200 bytes
+  lda #$02                     ; Setup to read $200 bytes
+  sta ZP_SectorSize+1          ; Setup to read $200 bytes
+  jsr SD_Card_Read_Sector      ; Read FAT to $0500
+  rts
+
+
+WriteFAT:
+  lda FAT1BeginLBA             ; Copy FAT begin to current sector 
+  sta CurrentSector            ; Copy FAT begin to current sector
+  lda FAT1BeginLBA+1           ; Copy FAT begin to current sector
+  sta CurrentSector+1          ; Copy FAT begin to current sector
+  lda FAT1BeginLBA+2           ; Copy FAT begin to current sector
+  sta CurrentSector+2          ; Copy FAT begin to current sector
+  lda FAT1BeginLBA+3           ; Copy FAT begin to current sector
+  sta CurrentSector+3          ; Copy FAT begin to current sector
+  lda #$00                     ; Setup to write FAT from $0500
+  sta ZP_SectorBufPTR          ; Setup to write FAT from $0500
+  lda #$05                     ; Setup to write FAT from $0500 
+  sta ZP_SectorBufPTR+1        ; Setup to write FAT from $0500
+  jsr SD_Card_Write_Sector     ; Write FAT1 from $0500
+  clc                          ; clear carry before add.
+  lda CurrentSector            ; Adding size of FAT to current sector to get to FAT2Begin
+  adc FATsize                  ; Adding size of FAT to current sector to get to FAT2Begin 
+  sta CurrentSector            ; Adding size of FAT to current sector to get to FAT2Begin
+  lda CurrentSector+1          ; Adding size of FAT to current sector to get to FAT2Begin
+  adc FATsize+1                ; Adding size of FAT to current sector to get to FAT2Begin
+  sta CurrentSector+1          ; Adding size of FAT to current sector to get to FAT2Begin
+  lda CurrentSector+2          ; Adding size of FAT to current sector to get to FAT2Begin
+  adc FATsize+2                ; Adding size of FAT to current sector to get to FAT2Begin
+  sta CurrentSector+2          ; Adding size of FAT to current sector to get to FAT2Begin
+  lda CurrentSector+3          ; Adding size of FAT to current sector to get to FAT2Begin
+  adc FATsize+3                ; Adding size of FAT to current sector to get to FAT2Begin
+  sta CurrentSector+3          ; Adding size of FAT to current sector to get to FAT2Begin
+  lda #$00                     ; Setup to write FAT from $0500
+  sta ZP_SectorBufPTR          ; Setup to write FAT from $0500
+  lda #$05                     ; Setup to write FAT from $0500 
+  sta ZP_SectorBufPTR+1        ; Setup to write FAT from $0500
+  jsr SD_Card_Write_Sector     ; Write FAT2 from $0500
+  rts
+
+
+
+
+FindFreeCluster:               ; Returns free cluster number to ClusterNum 
+  lda ClusterNum               ; Backup current cluster number to clustertemp
+  sta ClusterTemp              ; Backup current cluster number to clustertemp
+  lda ClusterNum+1             ; Backup current cluster number to clustertemp
+  sta ClusterTemp+1            ; Backup current cluster number to clustertemp
+  lda ClusterNum+2             ; Backup current cluster number to clustertemp
+  sta ClusterTemp+2            ; Backup current cluster number to clustertemp
+  lda ClusterNum+3             ; Backup current cluster number to clustertemp
+  sta ClusterTemp+3            ; Backup current cluster number to clustertemp
+  lda #00                      ; Start search at cluster 00
+  sta ClusterNum               ; Set Cluster to 00
+  sta ClusterNum+1             ; Set Cluster to 00
+  sta ClusterNum+2             ; Set Cluster to 00
+  sta ClusterNum+3             ; Set Cluster to 00
+  lda #$00                     ; Set pointer to $0500
+  sta ZP_DIRRecordPTR          ; Set pointer to $0500
+  lda #$05                     ; Set pointer to $0500
+  sta ZP_DIRRecordPTR+1        ; Set pointer to $0500
+  ldy #$00                     ; Checking the zeroth byte
+CheckClusterFree:              ; Loop over clusters looking for one that is all zeros (free)
+  lda (ZP_DIRRecordPTR),y      ; Load the byte to check
+  cmp #$00                     ; Compare to zero - zero is free 
+  bne IncClusterNum            ; If not zero then cluster is inuse and we can move to next cluster
+  iny                          ; Increment the byte to check 
+  cpy #$04                     ; We check 4 bytes
+  bne CheckClusterFree         ; Check the next byte in the cluster
+  jmp FoundFreeCluster         ; Current cluster must be free
+IncClusterNum:                 ; Increment the pointer and the cluster number
+  clc                          ; Clear carry before add
+  lda ZP_DIRRecordPTR          ; Load low byte of pointer
+  adc #$04                     ; Add 4 as we have 4 bytes per record
+  sta ZP_DIRRecordPTR          ; Store new low byte
+  lda ZP_DIRRecordPTR+1        ; load high byte of pointer
+  adc #$00                     ; Add 00, this deals with any carry 
+  sta ZP_DIRRecordPTR+1        ; Store new high byte
+  clc                          ; Clear carry before add
+  lda ClusterNum+3             ; Load low byte of ClusterNum
+  adc #$01                     ; Add 01
+  sta ClusterNum+3             ; Store new low byte of cluster number
+  lda ClusterNum+2             ; Add 00 to next bytes to deal with any carry
+  adc #$00                     ; Add 00 to next bytes to deal with any carry
+  sta ClusterNum+2             ; Add 00 to next bytes to deal with any carry
+  lda ClusterNum+1             ; Add 00 to next bytes to deal with any carry
+  adc #$00                     ; Add 00 to next bytes to deal with any carry
+  sta ClusterNum+1             ; Add 00 to next bytes to deal with any carry
+  lda ClusterNum               ; Add 00 to next bytes to deal with any carry
+  adc #$00                     ; Add 00 to next bytes to deal with any carry
+  sta ClusterNum               ; Add 00 to next bytes to deal with any carry
+  ldy #$00                     ; Add 00 to next bytes to deal with any carry
+  jmp CheckClusterFree         ; Go check the next cluster
+FoundFreeCluster:              ; We have found a free cluster
+  ldy #$00                     ; We now mark it as end of the cluster chain with $FF
+  lda #$FF                     ; We now mark it as end of the cluster chain with $FF
+  sta (ZP_DIRRecordPTR),y      ; Mark new cluster as end of chain.
+  iny                          ; Mark all 4 bytes as $FF
+  sta (ZP_DIRRecordPTR),y      ; Mark new cluster as end of chain.
+  iny                          ; Mark all 4 bytes as $FF
+  sta (ZP_DIRRecordPTR),y      ; Mark new cluster as end of chain.
+  iny                          ; Mark all 4 bytes as $FF
+  sta (ZP_DIRRecordPTR),y      ; Mark new cluster as end of chain.
+  lda #$FF                     ; Check if High byte of Cluster Temp is $FF
+  cmp ClusterTemp              ; If high byte is $FF then this is the first cluster and we dont need to link it
+  bne LinkClusterChain         ; If it is not $FF then we go and link clustertemp (previous cluster) to clusternum
+  rts
+
+
+
+
+LinkClusterChain:
+  lda #$00                     ; Zero out offset into FAT
+  sta ZP_DIRRecordPTR          ; Zero out offset into FAT
+  sta ZP_DIRRecordPTR+1        ; Zero out offset into FAT
+  lda ClusterTemp+3            ; Get LSB of old cluster number
+  sta ZP_DIRRecordPTR          ; Store LSB of old cluster number to the pointer 
+  clc                          ; Clear carry before rotate
+  rol ZP_DIRRecordPTR          ; Mul*2
+  rol ZP_DIRRecordPTR          ; Mul*2 again (4 bytes per record in the FAT)
+  rol ZP_DIRRecordPTR+1        ; Deal with overflow of mul
+  clc                          ; Clear carry before add
+  lda ZP_DIRRecordPTR+1        ; Add $0500 to offset into FAT.
+  adc #$05                     ; add $0500 to offset into FAT.
+  sta ZP_DIRRecordPTR+1        ; add $0500 to offset into FAT.
+  lda #$00                     ; add $0500 to offset into FAT.
+  adc ZP_DIRRecordPTR          ; add $0500 to offset into FAT.
+  sta ZP_DIRRecordPTR          ; add $0500 to offset into FAT.
+  ldy #$00                     ; Set byte index to zero
+  lda ClusterNum+3             ; Get LSB of new cluster
+  sta (ZP_DIRRecordPTR),y      ; Store to record of old cluster
+  iny                          ; Increment byte index
+  lda ClusterNum+2             ; Get next byte of new cluster
+  sta (ZP_DIRRecordPTR),y      ; Store to record of new cluster 
+  iny                          ; Increment byte index
+  lda ClusterNum+1             ; Get next byte of new cluster
+  sta (ZP_DIRRecordPTR),y      ; Store to record of new cluster
+  iny                          ; Increment byte index
+  lda ClusterNum               ; Get next byte of new cluster
+  sta (ZP_DIRRecordPTR),y      ; Store to record of new cluster
+  rts
+
+
+
 
 
 BootStrap:
@@ -1513,7 +1952,7 @@ Array_7seg:                    ; Which bits are needed for 7 segment display
  .org $ff68
   jmp SD_Card_Read_Sector      ; Reads a sector from the SDcard 
  .org $ff6C
-  jmp SD_Card_Write_Sector     ; Writes a sector to SDard (NOT implemented)
+  jmp SD_Card_Write_Sector     ; Writes a sector to SDcard
  .org $ff70
   jmp CreateFileName           ; Convert a filenumber to a filename
  .org $ff74
@@ -1526,12 +1965,15 @@ Array_7seg:                    ; Which bits are needed for 7 segment display
   jmp GetNextSector            ; Increments sector number, goes to FAT for next cluster if needed
  .org $ff84
   jmp FindNextCluster          ; Find next cluster from FAT
+ .org $ff88
+  jmp WriteFile                ; Find next cluster from FAT
+
+
+ .org $FF90
+  jmp BootStrap                ; Load file and run it.
 
  .org $FFAA
   jmp Continue                 ; Resume execution from after BRK
-
- .org $ff90
-  jmp BootStrap                ; Load file and run it.
 
  .org $FFFA
  .word NMI
