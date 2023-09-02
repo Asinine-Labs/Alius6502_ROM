@@ -3,11 +3,12 @@
 ;   ROM CODE for Alius 6502 board V1.0
 ;   
 ;   Memory Map
-;   $0000 -> $00FF - Zero page, some bytes used from fast access data, counters, pointers
+;   $0000 -> $00FF - Zero page, some bytes used for fast access data, counters, pointers
 ;   $0100 -> $01FF - Stack
 ;   $0200 -> $02FF - Used by system for assorted FAT32 info, counters, pointers 
 ;   $0300 -> $04FF - Used by FAT32 code, buffer for sectors during Directory and Cluster search 
-;   $0500 -> $7FFF - User space RAM
+;   $0500 -> $06FF - FAT data used by FAT32 code
+;   $0700 -> $7FFF - User space RAM
 ;   $8000 -> $9FFF - I/O
 ;   $A000 -> $FEFF - ROM Code
 ;   $FF00 -> $FFFB - ROM Jump table
@@ -20,10 +21,11 @@ DDRB = $8012
 DDRA = $8013
 
 
+
 ;-----------------------------------------------------------------------------------------
 ; Zero Page Storage - Used for performace related code
 ;-----------------------------------------------------------------------------------------
-; Tempory storage and counters
+; Tempory storage, counters, and pointers
 ZP_Temp = $FF                  ; Temp byte
 ZP_Counter = $FE               ; 8 bit counter
 ZP_Counter16 = $FC             ; 16 bit counter, 2 bytes including $FC,$FD
@@ -34,6 +36,7 @@ ZP_SectorSize = $F6            ; 2 bytes including F6,F7
 ; Content and display mask for the 7 segment display
 ZP_DisplayMask = $D3           ; D3,D4,D5,D6,D7,D8 
 ZP_Display = $D0               ; D0,D1,D2 
+
 
 
 ;-----------------------------------------------------------------------------------------
@@ -67,14 +70,16 @@ FATsize = $022C                ; 4 bytes including 022C,022D,022E,022F
 TempByte = $0230               ; Temp byte
 
 
+
 ; Used for loading of files form SDcard.
 FileNumber = $0250             ; File Number to create FileName
 FileName = $0251               ; File Name to load
 FileSize = $025D               ; File Size, 2 bytes including $025D(LSB) ,$025E(MSB)
 SectorCount = $025F            ; Number of whole sectors needed to load
-LoadAddrPTR = $0260            ; Address pointer - Where to load file, $0260(LSB),$0261(MSB)
+FileAddrPTR = $0260            ; Address pointer - file to load or save, $0260(LSB),$0261(MSB)
 FileFirstCluster = $0262       ; 4 bytes including 0262,0263,0264,0265
 BytesToWrite = $0266           ; 2 bytes including 0266,0267
+
 
 
 ; Debug CPU status.
@@ -85,45 +90,44 @@ Status = $0273                 ; Value of Status register
 PC_Low = $0274                 ; Value of Program Count Low byte 
 PC_High = $0275                ; Value of Program Count High Byte
 
+
+
 ; Hardware IRQ calls code based on the pointer at NMI_Vec & IRQ_Vec
 NMI_Vec = $02FC                ; MNI vector in RAM, $02FC and $02FD
 IRQ_Vec = $02FE                ; IRQ vector in RAM, $02FE and $02FF
 
+
+
 ;-----------------------------------------------------------------------------------------
 ; Main code of Monitor ROM
 ;-----------------------------------------------------------------------------------------
-  .org $8000
-  .org $A000
+  .org $8000                  ; We don't user first 16K of the 32K ROM chip
+  .org $A000                  ; Real start of code is at $A000
+
+
 
 Reset:
   ldx #$FF
   txs                          ; Setup stack
-
   lda #<IRQ_Exit               ; Low byte of IRQ_Exit
   sta IRQ_Vec                  ; Set default IRQ handler
   lda #>IRQ_Exit               ; High byte of IRQ_Exit
   sta IRQ_Vec+1                ; Set default IRQ handler
-
   lda #<IRQ_Exit               ; Low byte of IRQ_Exit
   sta NMI_Vec                  ; Set default NMI handler
   lda #>IRQ_Exit               ; High byte of IRQ_Exit
   sta NMI_Vec+1                ; Set default NMI handler
-
   lda #$FF
   sta DDRB                     ; Set 6522 Port B to all output
-
   lda #$00
   sta DDRA                     ; Set 6522 Port A to all input
-
   lda #$00
   sta ZP_Display               ; Init display byte right
   sta ZP_Display+1             ; Init display byte middle
   sta ZP_Display+2             ; Init display byte left
-
   lda #$00
   sta InputPosition            ; Init input position. 
   sta MonitorMode              ; 00-Idle, 01-Read, 02-Write-Addr, 03-Write-Data, 04-Execute.
-
   lda #0b01111111              ; Display mask, default to digits without the decimal point.
   sta ZP_DisplayMask
   sta ZP_DisplayMask+1
@@ -131,16 +135,13 @@ Reset:
   sta ZP_DisplayMask+3
   sta ZP_DisplayMask+4
   sta ZP_DisplayMask+5
-
   lda #0b00001100              ; Config SPI bus, set both CS_ set high, clock and data low.
   sta PORTB
-
   cli                          ; Turn on interrupts to support BRK debug.
-
   lda #$00                     ; Setup to read "00.BIN"
-  sta FileNumber 
-
+  sta FileNumber               ; Set filenumner ot 00 
   jmp BootStrap                ; Check for SDcard and loads file or return to monitor ROM.
+
 
 
 MonitorROM:
@@ -151,7 +152,6 @@ MonitorROM:
   jsr ReadKeypad               ; Read the keypad
   cmp #$FF                     ; If no key pressed then
   beq MonitorROM               ; Jump back to mainloop
-
 CheckReadKey:
   cmp #$FA                     ; Check if read button pressed
   bne CheckWriteKey            ; If not Read, then check Write key
@@ -160,7 +160,6 @@ CheckReadKey:
   ldx #$00                     ; Set input position to 0
   stx InputPosition            ; Reset input position
   jmp MonitorROM  
- 
 CheckWriteKey:
   cmp #$FB                     ; Check if write button pressed
   bne CheckExecKey             ; If not Write, then check Exec key
@@ -169,7 +168,6 @@ CheckWriteKey:
   ldx #$00                     ; Reset address position
   stx InputPosition            ; Reset address position
   jmp MonitorROM  
-
 CheckExecKey:
   cmp #$FC                     ; Check if exec button pressed
   bne CheckInputMode           ; If not Exec, then deal with other input
@@ -178,7 +176,6 @@ CheckExecKey:
   ldx #$00                     ; Reset address position
   stx InputPosition            ; Reset address position
   jmp MonitorROM  
-
 CheckInputMode:
   lda MonitorMode              ; Get current Mode
 CheckIdle:
@@ -197,17 +194,12 @@ CheckWriteData:
   cmp #$03                     ; Check Mode with 03/WriteData
   bne CheckExec                ; If not WriteData, then check if Mode is Execute
   jmp WriteData                ; Mode is WriteData
-CheckExec
+CheckExec:
   cmp #$04                     ; Check Mode with 04/Exec
-  bne NoMatch                  ; If not exec, then we are done
+  bne Idle                     ; If not exec, then we are done
   jmp Exec                     ; Mode is exec
-NoMatch:
-  jmp MonitorROM               ; This should never happen?
-
-
 Idle:
   jmp MonitorROM
-
 
 ReadMode:
   lda KeyCode                  ; Get key pressed
@@ -223,7 +215,6 @@ IncAddress:
 ReadModeExit:
   jmp MonitorROM
 
-
 WriteAddr:
   lda KeyCode                  ; Get key pressed
   cmp #$FD                     ; If key is ENT, then check mode to WriteData
@@ -233,7 +224,6 @@ WriteAddr:
   lda #$03                     ; Change Mode to 03/WriteData
   sta MonitorMode              ; Store new Mode
   jmp MonitorROM
-
 
 WriteData:
   lda KeyCode                  ; Get key pressed
@@ -246,7 +236,6 @@ WriteData:
   inc ZP_Display+2             ; Increment address high byte
 WriteDataExit:
   jmp MonitorROM
-
 
 WriteDataInput:
   lda InputPosition            ; Get Data position
@@ -265,7 +254,7 @@ DataPosition0:
   ora ZP_Display               ; Join new top half with old lower half 
   sta ZP_Display               ; Store new Byte
   inc InputPosition            ; Move Input position to next half byte 
-  jmp StoreDataToMem
+  jmp StoreDataToMemory
 DataPosition1: 
   lda #$F0                     ; Mask off bottom half of byte, keep upper half
   and ZP_Display               ; Mask off bottom half of byte, Keep upper half
@@ -275,12 +264,11 @@ DataPosition1:
   sta ZP_Display               ; Store new byte 
   lda #$00                     ; Reset Input position to 00
   sta InputPosition            ; Store Input position
-StoreDataToMem:
+StoreDataToMemory:
   lda ZP_Display               ; Get the new Data byte to store.
   ldy #$00                     ; Set zero offset.
   sta (ZP_Display+1),y         ; Store Data to address in zero page
   jmp MonitorROM
-
 
 AddressInput:
   lda InputPosition            ; Get input position
@@ -293,7 +281,6 @@ AddressInput:
   cmp #$03                     ; If input position is 3
   beq AddressPosition3         ;
   jmp MonitorROM               ; This should never happen!
-
 AddressPosition0:
   lda #$0F                     ; Mask off top half of address byte, keep lower half
   and ZP_Display+2             ; Mask off top half of address byte, keep lower half
@@ -307,7 +294,6 @@ AddressPosition0:
   sta ZP_Display+2             ; Store new address byte
   inc InputPosition            ; Increment input position to get next half byte
   jmp MonitorROM
-
 AddressPosition1:
   lda #$F0                     ; Mask off lower half byte, keep upper half
   and ZP_Display+2             ; Mask off lower half byte, keep upper half
@@ -317,7 +303,6 @@ AddressPosition1:
   sta ZP_Display+2             ; Store new Address byte
   inc InputPosition            ; Increment input position to get next half byte
   jmp MonitorROM
-
 AddressPosition2:
   lda #$0F                     ; Mask off top half of address byte, keep lower half
   and ZP_Display+1             ; Mask off top half of address byte, keep lower half
@@ -331,7 +316,6 @@ AddressPosition2:
   sta ZP_Display+1             ; Store new address byte
   inc InputPosition            ; Increment input position to get next half byte
   jmp MonitorROM
-
 AddressPosition3:
   lda #$F0                     ; Mask off lower half byte, keep upper half
   and ZP_Display+1             ; Mask off lower half byte, keep upper half
@@ -343,7 +327,6 @@ AddressPosition3:
   sta InputPosition            ; Reset input position to 00
   jmp MonitorROM
 
-
 Exec:
   lda KeyCode                  ; Get key pressed
   cmp #$FD                     ; If key is ENT
@@ -351,6 +334,7 @@ Exec:
   jmp AddressInput             ; If some other key pressed
 ExecEnt:
   jmp (ZP_Display+1)           ; Jump to address pointed ot by Display+1 and Display+2
+
 
 
 ReadKeypad:                    ; Reads keypad with debounce (blocking)
@@ -366,6 +350,7 @@ WaitKeyRelease:
   lda KeyCode                  ; Load which key was pressed
 ReadKeypadExit:
   rts
+
 
 
 ScanKeypad:                    ; Checks for key press, no debounce.
@@ -406,6 +391,7 @@ FindCol:
   rts
 
 
+
 Sleep_Long:                    ; Sleep for about 0.5 second
   ldx #$FF
   ldy #$FF
@@ -420,6 +406,7 @@ Sleep_loop_X:
   rts
 
 
+
 Sleep_Short:                   ; Sleep for about 50mS
   ldx #$FF
 Sleep_Short_loop:
@@ -429,11 +416,13 @@ Sleep_Short_loop:
   rts
 
 
+
 UpdateDisplay:
   jsr SPI_Select_7seg          ; Set CS_ for 7 segment display
   jsr Update_7seg              ; Send relevent bytes to the display
   jsr SPI_Unselect_7seg        ; Clear CS_ for 7 segment display
   rts
+
 
 
 Update_7seg:                   ; Displays three bytes as 6 HEX digits
@@ -454,7 +443,6 @@ Update_7seg:                   ; Displays three bytes as 6 HEX digits
   lda Array_7seg,x             ; Use X index to get segment patten for HEX digit
   and ZP_DisplayMask+1         ; Mask off any segments not to display, good for supressing decimal point
   jsr SPI_Write_Byte           ; Send bit patten to SPI bus
-
   lda ZP_Display+1             ; Get second byte to display
   tay                          ; Store byte in Y for later
   and #$0F                     ; Mask off upper half, keep lower half
@@ -472,7 +460,6 @@ Update_7seg:                   ; Displays three bytes as 6 HEX digits
   lda Array_7seg,x             ; Use X index to get segment patten for HEX digit
   and ZP_DisplayMask+3         ; Mask off any segments not to display, good for supressing decimal point
   jsr SPI_Write_Byte           ; Send bit patten to SPI bus
-
   lda ZP_Display+2             ; Get third byte to display
   tay                          ; Store byte in Y for later
   and #$0F                     ; Mask off upper half, keep lower half
@@ -493,11 +480,13 @@ Update_7seg:                   ; Displays three bytes as 6 HEX digits
   rts 
 
 
+
 SPI_Select_SDcard:
   lda PORTB                    ; Load current state of PORTB
   and #0b11110111              ; Turn off bit #3 for CS_ (Active Low) of SDCard
   sta PORTB                    ; Store new state to PORTB
   rts
+
 
 
 SPI_Unselect_SDcard:
@@ -507,6 +496,7 @@ SPI_Unselect_SDcard:
   rts
 
 
+
 SPI_Select_7seg:
   lda PORTB                    ; Load current state of PORTB
   and #0b11111011              ; Turn off bit #2 for CS_ (Active Low) of 7 segment display
@@ -514,11 +504,13 @@ SPI_Select_7seg:
   rts
 
 
+
 SPI_Unselect_7seg:
   lda PORTB                    ; Load current state of PORTB
   ora #0b00000100              ; turn on bit #2 for CS_ (Active Low) of 7 segment display
   sta PORTB                    ; Store new state of PORTB
   rts
+
 
 
 SPI_Write_Byte:                ; Writes the byte in A register to SPI bus.
@@ -541,10 +533,11 @@ SPI_out_low_bit:
   sta PORTB                    ; Store Data bit to PORTB 
   inc PORTB                    ; Cycle clock high
   dec PORTB                    ; Cycle clock low
-SPI_bit_done
+SPI_bit_done:
   dex                          ; Decrement bit counter
   bne SPI_loop                 ; If bit counter not 0 then go around again
   rts
+
 
 
 SPI_Read_Byte:                 ; Reads a byte from SPI bus stores in A register.
@@ -553,7 +546,7 @@ SPI_Read_Byte:                 ; Reads a byte from SPI bus stores in A register.
   ora #0b00000010              ; Ensure data bit high, always output a 1 during a read
   and #0b11111110              ; Ensure clock low
   sta PORTB                    ; Store Clock/Data to PORTB
-SPI_Read_Bit
+SPI_Read_Bit:
   inc PORTB                    ; Set clock high
   lda PORTA                    ; Get data from PORTA
   dec PORTB                    ; Set clock low
@@ -564,6 +557,7 @@ SPI_Read_Bit
   dex                          ; Count down the 8 bits
   bne SPI_Read_Bit             ; If we havent done all 8 bits then go around again
   rts
+
 
 
 Init_SD_card:
@@ -577,7 +571,6 @@ Init_SD_loop:
   jsr SPI_Write_Byte           ; Send $FF Byte
   dec ZP_Counter               ; Decrement counter
   bne Init_SD_loop             ; If Counter is not zero then go around again
-
   jsr SPI_Select_SDcard        ; Set CS_ low for SDcard
   lda #$FF                     ; Send $FF byte after CS_ change
   jsr SPI_Write_Byte           ; Send $FF byte after CS_ change
@@ -717,7 +710,7 @@ SetBlockLength:
   cmp #$00                     ; Check R1 result code is 00
   beq EndSDInit                ; If R1 result code is 00 then init finished
   jmp SD_Card_Error            ; If R1 result code is not 1 then return error
-EndSDInit
+EndSDInit:
   lda #$FF                     ; Setup $FF junk byte
   jsr SPI_Write_Byte           ; Send $FF junk byte before CS_ change
   jsr SPI_Unselect_SDcard      ; Change CS_ to high to unslect SDcard
@@ -726,7 +719,6 @@ EndSDInit
   lda #$00                     ; Return no error
   sta ErrorCode                ; store error code
   rts
-
 
 
 
@@ -817,7 +809,6 @@ CMD17_Cleanup:
 
 
 
-
 SD_Card_Write_Sector:
   jsr Sector_Math              ; Go calculate Sector for SDHC vs SD
   lda #$FF                     ; Setup $FF junk byte
@@ -863,22 +854,22 @@ IncBytesWritten:
   bne CheckWriteSize           ; If not zero then check if write is done.
   inc ZP_Counter16+1           ; Incremnet counter high byte
 CheckWriteSize:
-  lda #$00
-  cmp ZP_Counter16
-  bne CMD24_WriteBytes
-  lda #$02
-  cmp ZP_Counter16+1 
-  bne CMD24_WriteBytes
+  lda #$00                     ; Check if we have written $0200 bytes
+  cmp ZP_Counter16             ; Check LSB of counter
+  bne CMD24_WriteBytes         ; Go write more bytes
+  lda #$02                     ; Check if we have written $0200 bytes
+  cmp ZP_Counter16+1           ; Check MSB of counter
+  bne CMD24_WriteBytes         ; go write more bytes
 CMD24_CheckWriteValid:
   jsr SD_Card_Result           ; Wait for R1 result code
-  and #$1F
-  cmp #$05
-  beq CMD24_Cleanup
-  jmp SD_Card_Error            ; if error then exit read sector
+  and #$1F                     ; We only check lower bits
+  cmp #$05                     ; Check for status 05 for accepted write data
+  beq CMD24_Cleanup            ; If write accepted then cleanup
+  jmp SD_Card_Error            ; If error then exit read sector
 CMD24_Cleanup:
   jsr SD_Card_Result           ; Wait for R1 result code
-  cmp #$00
-  beq CMD24_Cleanup
+  cmp #$00                     ; Check if result is 00 (busy)
+  beq CMD24_Cleanup            ; If result is zero then we wait/check again
   lda #$FF                     ; Setup junk byte
   jsr SPI_Write_Byte           ; Send junk before CS_ change
   jsr SPI_Unselect_SDcard      ; Unselect the SD card.
@@ -1018,7 +1009,6 @@ BootSecError:
 
 
 
-
 SD_Card_Error:                 ; Clean up SPI/SDcard things and return an error
   lda #$FF                     ; Set error
   sta ErrorCode                ; Return an error
@@ -1028,6 +1018,7 @@ SD_Card_Error:                 ; Clean up SPI/SDcard things and return an error
   lda #$FF                     ; Setup $FF junk byte
   jsr SPI_Write_Byte           ; Send junk after CS_ change
   rts                          ; Return an error
+
 
 
 SD_Card_Result:                ; Wait for SDcard to return R1, SDcard sends $FF at idle.
@@ -1041,6 +1032,7 @@ WaitLoop:
   bne WaitLoop                 ; Still waiting for data, go around again.
 WaitExit:
   rts                          ; Return R1 or $FF
+
 
 
 FindFile:
@@ -1131,6 +1123,7 @@ FileNotFound:
   rts
 
 
+
 GetNextSector:
   lda SectorIndex              ; Get which sector of this cluster 
   cmp SecPerCluster            ; Check against number of sectors per cluster
@@ -1159,6 +1152,7 @@ IncrementSector:
   sta ErrorCode                ; Return no error
 GotNextSector:
   rts
+
 
 
 FindNextCluster:
@@ -1294,7 +1288,6 @@ Sector_Math_Done:
 
 
 
-
 LBA_Addr:                      ; Calculates LBA sector from cluster address.
   sec                          ; Set carry before subtract
   lda ClusterNum+3             ; LSB
@@ -1345,6 +1338,7 @@ LBAError:
   rts                          ; Return with error.
 
 
+
 GetRandomByte:
   ldy #$08                     ; Get 8 bits
 GetRandBit:
@@ -1363,7 +1357,8 @@ RandDone:
   rts
 
 
-LoadFile:                      ; Loads file to address at LoadAddrPTR
+
+LoadFile:                      ; Loads file to address at FileAddrPTR
   jsr FindFile                 ; Find File, gets file Cluster and FileSize
   lda #$00                     ; Check for error, if file not found
   cmp ErrorCode                ; Check if no file to load
@@ -1374,9 +1369,9 @@ LoadFileLoop:                  ; Top of loop that read file one sector at a time
   clc                          ; Clear carry before rotate right
   ror                          ; Rotate Right MSB of file size
   sta SectorCount              ; Store Number of sectors needed
-  lda LoadAddrPTR              ; Setup Sector pointer based on Load Address (LSB)
+  lda FileAddrPTR              ; Setup Sector pointer based on Load Address (LSB)
   sta ZP_SectorBufPTR          ; Setup Sector pointer based on Load Address (LSB)
-  lda LoadAddrPTR+1            ; Setup Sector pointer based on Load Address (MSB)
+  lda FileAddrPTR+1            ; Setup Sector pointer based on Load Address (MSB)
   sta ZP_SectorBufPTR+1        ; Setup Sector pointer based on Load Address (MSB)
   lda #$00                     ; Check if one or more whole sectors to load
   cmp SectorCount              ; Check number of sectors to load 
@@ -1391,13 +1386,12 @@ LoadWholeSector:               ; If whole sector to read then read whole sector
   sec                          ; Set carry before subtract
   sbc #$02                     ; We only need to subtract from MSB of filesize
   sta FileSize+1               ; Store FileSize MSB again
-  lda LoadAddrPTR+1            ; Add $0200 to Load Address (MSB)
+  lda FileAddrPTR+1            ; Add $0200 to Load Address (MSB)
   clc                          ; Clear carry before add
   adc #$02                     ; Add $0200 to file load pointer (MSB)
-  sta LoadAddrPTR+1            ; Store Load addrfess MSB
+  sta FileAddrPTR+1            ; Store Load addrfess MSB
   jsr GetNextSector            ; Find the next sector to load
   jmp LoadFileLoop             ; Go around again
-
 LoadPartSector:                ; Load remainder of sector
   lda FileSize                 ; Setup to read whole $0200 sector
   sta ZP_SectorSize            ; Setup Read Size low byte
@@ -1416,7 +1410,7 @@ LoadError:
 
 
 WriteFile:
-  jsr FindFile
+  jsr FindFile                 ; Check if we have file with this name already
   lda #$02                     ; 02 is File not found, so we are good to save file
   cmp ErrorCode                ; Check if our error code is 02
   bne WriteFileError           ; dont write file, return error
@@ -1424,7 +1418,6 @@ WriteFile:
   sta BytesToWrite             ; Move file size to Bytes to write counter
   lda FileSize+1               ; Move file size to Bytes to write counter
   sta BytesToWrite+1           ; Move file size to Bytes to write counter
-  ; TODO HERE - Check Dir for duplicate file name.
   jsr LoadFAT                  ; Load a copy of the FAT tp $0500
   lda #$FF                     ; Set marker to show we have no previous cluster.
   sta ClusterNum               ; Store $FF in MSB of ClusterNum to show we are first in chain.
@@ -1443,9 +1436,9 @@ WriteFileLoop:                 ; Write the file to SDcard one sector at a time
   clc                          ; Clear carry before the rotate right
   ror                          ; Rotate Right MSB of file size to get number of whole clusters needed
   sta SectorCount              ; Store the number of whole sectors needed
-  lda LoadAddrPTR              ; Setup Sector buffer pointer based on Load Address (LSB)
+  lda FileAddrPTR              ; Setup Sector buffer pointer based on Load Address (LSB)
   sta ZP_SectorBufPTR          ; Setup Sector buffer pointer based on Load Address (LSB)
-  lda LoadAddrPTR+1            ; Setup Sector buffer pointer based on Load Address (MSB)
+  lda FileAddrPTR+1            ; Setup Sector buffer pointer based on Load Address (MSB)
   sta ZP_SectorBufPTR+1        ; Setup Sector buffer pointer based on Load Address (MSB)
   lda #$00                     ; Check if one or more whole sectors to write
   cmp SectorCount              ; Check number of sectors to load 
@@ -1456,10 +1449,10 @@ WriteFileSector:               ; Write a whole sector
   sec                          ; Set carry before subtract
   sbc #$02                     ; We only need to subtract from MSB of filesize
   sta BytesToWrite+1           ; Store FileSize MSB again
-  lda LoadAddrPTR+1            ; Add $0200 to Load Address (MSB)
+  lda FileAddrPTR+1            ; Add $0200 to Load Address (MSB)
   clc                          ; Clear carry before add
   adc #$02                     ; Add $0200 to file load pointer (MSB)
-  sta LoadAddrPTR+1            ; Store Load address MSB
+  sta FileAddrPTR+1            ; Store Load address MSB
   jsr FindNextWriteSector      ; Find the next sector to Write to
   jmp WriteFileLoop            ; Go around again and write more of the file
 WriteLastSector:               ; Write the last sector
@@ -1503,9 +1496,6 @@ IncrementWriteSector:          ; Increment the sector number within the current 
   sta ErrorCode                ; Return no error
 FoundNextWriteSector:
   rts
-
-
-
 
 
 
@@ -1607,6 +1597,7 @@ LoadFAT:
   rts
 
 
+
 WriteFAT:
   lda FAT1BeginLBA             ; Copy FAT begin to current sector 
   sta CurrentSector            ; Copy FAT begin to current sector
@@ -1640,7 +1631,6 @@ WriteFAT:
   sta ZP_SectorBufPTR+1        ; Setup to write FAT from $0500
   jsr SD_Card_Write_Sector     ; Write FAT2 from $0500
   rts
-
 
 
 
@@ -1711,7 +1701,6 @@ FoundFreeCluster:              ; We have found a free cluster
 
 
 
-
 LinkClusterChain:
   lda #$00                     ; Zero out offset into FAT
   sta ZP_DIRRecordPTR          ; Zero out offset into FAT
@@ -1745,8 +1734,6 @@ LinkClusterChain:
 
 
 
-
-
 BootStrap:
   jsr CreateFileName           ; Convert FileNumber to FileName 
   jsr Init_SD_card             ; Init the SDcard to SPI mode.
@@ -1758,9 +1745,9 @@ BootStrap:
   cmp ErrorCode                ; Check for error
   bne JmpMon                   ; If error then return to Moinitor ROM
   lda #$00                     ; Setup Load Address to $1000
-  sta LoadAddrPTR              ; Store in Load address pointer (LSB)
+  sta FileAddrPTR              ; Store in Load address pointer (LSB)
   lda #$10                     ; Setup Load Address to $1000
-  sta LoadAddrPTR+1            ; Store in Load Address pointer (MSB)
+  sta FileAddrPTR+1            ; Store in Load Address pointer (MSB)
   jsr LoadFile                 ; Go and load the file
   lda #$00                     ; Check for error
   cmp ErrorCode                ; Check for error
@@ -1768,6 +1755,7 @@ BootStrap:
   jmp $1000                    ; Run code at $1000
 JmpMon:
   jmp MonitorROM               ; If no file, return to monitor rom.
+
 
 
 CreateFileName:
@@ -1800,6 +1788,7 @@ CreateFileName:
   lda #$4E                     ; Ascii N
   sta FileName+10
   rts
+
 
 
 IRQ:
@@ -1842,8 +1831,9 @@ EndBRK:
   tax                          ; Move A to X
   pla                          ; Pop  A
   rti                          ; Return to monitro ROM
-DoIRQ
+DoIRQ:
   jmp ($02FE)                  ; Jump to IRQ vector in RAM, default will jump back to IRQ_Exit
+
 
 
 Continue:                      ; This resumes execution after a BRK
@@ -1859,12 +1849,15 @@ Continue:                      ; This resumes execution after a BRK
   rti                          ; Return to execution
 
 
+
 IRQ_Exit:
   rti
 
 
+
 NMI:
   jmp ($02FC)                  ; MNI vector in RAM, default will jump back to IRQ_Exit
+
 
 
 KeypadArray:                   ; Converts keypad row/col to hex digits or control codes
@@ -1967,7 +1960,6 @@ Array_7seg:                    ; Which bits are needed for 7 segment display
   jmp FindNextCluster          ; Find next cluster from FAT
  .org $ff88
   jmp WriteFile                ; Find next cluster from FAT
-
 
  .org $FF90
   jmp BootStrap                ; Load file and run it.
