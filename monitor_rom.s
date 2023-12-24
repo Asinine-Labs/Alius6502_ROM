@@ -121,7 +121,13 @@ Reset:
   sta DDRB                     ; Set 6522 Port B to all output
   lda #$00
   sta DDRA                     ; Set 6522 Port A to all input
-  lda #$00
+  lda #$10                     ; Set T2 mode to free running
+  sta $801B                    ; Set T2 mode to free running
+  lda #$00                     ; Set T2 counter to 0 for fastest speed
+  sta $8018                    ; Set T2 counter to 0 for fastest speed
+  lda #$00                     ; Set output byte to 00, for max brightness
+  sta $801A                    ; Set output byte to 00, for max brightness
+  lda #$00                     ; Set display to 00
   sta ZP_Display               ; Init display byte right
   sta ZP_Display+1             ; Init display byte middle
   sta ZP_Display+2             ; Init display byte left
