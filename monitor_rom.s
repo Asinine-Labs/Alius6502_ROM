@@ -68,18 +68,19 @@ FAT1BeginLBA = $0224           ; 4 bytes including 0224,0225,0226,0227
 FAT2BeginLBA = $0228           ; 4 bytes including 0228,0229,022A,022B
 FATsize = $022C                ; 4 bytes including 022C,022D,022E,022F
 TempByte = $0230               ; Temp byte
+CurrentFATSector     = $0231      ; Which FAT sector is in memory
+RequestedFATSector   = $0232      ; Which FAT sector is requested
+BytesToWrite       = $0233     ; 4 bytes including 0233,0234,0235,0236
+SectorCount        = $0237     ; Number of whole sectors needed to load 0237,0238,0239,023A
 
 
 
-; Used for loading of files form SDcard.
-FileNumber = $0250             ; File Number to create FileName
-FileName = $0251               ; File Name to load
-FileSize = $025D               ; File Size, 2 bytes including $025D(LSB) ,$025E(MSB)
-SectorCount = $025F            ; Number of whole sectors needed to load
-FileAddrPTR = $0260            ; Address pointer - file to load or save, $0260(LSB),$0261(MSB)
-FileFirstCluster = $0262       ; 4 bytes including 0262,0263,0264,0265
-BytesToWrite = $0266           ; 2 bytes including 0266,0267
-
+; Used for loading of files from SDcard.
+FileNumber         = $0250     ; File Number to create FileName
+FileName           = $0251     ; File Name to load
+FileAddrPTR        = $0260     ; Address pointer - file to load or save, $0260(LSB),$0261(MSB)
+FileFirstCluster   = $0262     ; 4 bytes including 0262,0263,0264,0265
+FileSize           = $0266     ; File Size, 4 bytes including $0266(LSB), $0267, 0268, $0269(MSB)
 
 
 ; Debug CPU status.
