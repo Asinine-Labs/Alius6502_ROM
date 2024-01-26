@@ -10,29 +10,80 @@ PORTA = $8011
 DDRB = $8012
 DDRA = $8013
 
+;-----------------------------------------------------------------------------------------
+; Zero Page Storage - Used for performace related code
+;-----------------------------------------------------------------------------------------
+; Tempory storage, counters, and pointers
+ZP_Temp = $FF                  ; Temp byte
+ZP_Counter = $FE               ; 8 bit counter
+ZP_Counter16 = $FC             ; 16 bit counter, 2 bytes including $FC,$FD
+; FAT32 pointers and counters
+ZP_SectorBufPTR = $FA          ; 2 bytes including FA,FB
+ZP_DIRRecordPTR = $F8          ; 2 bytes including F8,F9
+ZP_SectorSize = $F6            ; 2 bytes including F6,F7
 ; Content and display mask for the 7 segment display
-DisplayMask = $D3              ; D3,D4,D5,D6,D7,D8 
-DisplayData = $D0              ; D0,D1,D2 
+ZP_DisplayMask = $D3           ; D3,D4,D5,D6,D7,D8
+ZP_Display = $D0               ; D0,D1,D2
 
+
+;-----------------------------------------------------------------------------------------
+; $0200 Page - Used for FAT32 and other data
+;-----------------------------------------------------------------------------------------
 ; Random number generator.
 RandByte = $0200               ; Random byte from random function
 RandSeed = $0201               ; 16 bit seed value for random function, Also $0202
-
 ; Used during read of keypad
-KeyCode = $0205                ; Code of key pressed.
-
+KeyRow = $0203                 ; Row of key press
+KeyCol = $0204                 ; Col of key press
+KeyCode = $0205                ; Code of key pressed
 ; Used for the return of error code.
 ErrorCode = $0206              ; Assorted error codes return. 00 = good.
+; Used as part of monitor rom input
+InputPosition = $0207          ; Which char of input address or data
+MonitorMode = $0208            ; Current mode of monitor
+; FAT32 support data
+CurrentSector = $0209          ; 4 bytes including 0209,020A,020B,020C
+ClusterBeginLBA = $020D        ; 4 bytes including 020D,020E,020F,0210
+SecPerCluster = $0211          ; How many sectors per cluster.
+SectorIndex = $0212            ; Which sector of the current cluster
+RootDirCluster = $0213         ; 4 bytes including 0213,0214,0215,0216
+ClusterNum = $0217             ; 4 bytes including 0217,0218,0219,021A
+SectorTemp  = $021B            ; 4 bytes including 021B,021C,021D,021E
+SDHCFlag = $021F               ; Flag to show if we have an SDHC card
+ClusterTemp = $0220            ; 4 bytes including 0220,0221,0222,0223
+FAT1BeginLBA = $0224           ; 4 bytes including 0224,0225,0226,0227
+FAT2BeginLBA = $0228           ; 4 bytes including 0228,0229,022A,022B
+FATsize = $022C                ; 4 bytes including 022C,022D,022E,022F
+TempByte = $0230               ; Temp byte
+CurrentFATSector     = $0231      ; Which FAT sector is in memory
+RequestedFATSector   = $0232      ; Which FAT sector is requested
+BytesToWrite       = $0233     ; 4 bytes including 0233,0234,0235,0236
+SectorCount        = $0237     ; Number of whole sectors needed to load 0237,0238,0239,023A
 
-; Used for loading of files form SDcard.
-FileNumber = $0250             ; File Number to create FileName
-FileName = $0251               ; File Name to load
-FileSize = $025D               ; File Size, 2 bytes including $025D(LSB) ,$025E(MSB)
-SectorCount = $025F            ; Number of whole sectors needed to load
-LoadAddrPTR = $0260            ; Address pointer - Where to load file, $0260(LSB),$0261(MSB)
 
-; Hardware IRQ calls code based on the pointer at IRQ_Vec
+
+; Used for loading of files from SDcard.
+FileNumber         = $0250     ; File Number to create FileName
+FileName           = $0251     ; File Name to load
+FileAddrPTR        = $0260     ; Address pointer - file to load or save, $0260(LSB),$0261(MSB)
+FileFirstCluster   = $0262     ; 4 bytes including 0262,0263,0264,0265
+FileSize           = $0266     ; File Size, 4 bytes including $0266(LSB), $0267, 0268, $0269(MSB)
+
+
+; Debug CPU status.
+AREG = $0270                   ; Value of A register
+XREG = $0271                   ; Value of X register
+YREG = $0272                   ; Value of Y register
+Status = $0273                 ; Value of Status register
+PC_Low = $0274                 ; Value of Program Count Low byte
+PC_High = $0275                ; Value of Program Count High Byte
+
+
+
+; Hardware IRQ calls code based on the pointer at NMI_Vec & IRQ_Vec
+NMI_Vec = $02FC                ; MNI vector in RAM, $02FC and $02FD
 IRQ_Vec = $02FE                ; IRQ vector in RAM, $02FE and $02FF
+
 
 
 ; Rom jump table, fixed locations across ROM versions
@@ -57,7 +108,13 @@ CreateFileName = $FF70         ; Convert a filenumber to a filename
 FindFile= $FF74                ; Read FAT sector
 LoadFile = $FF78               ; Loads file to memory
 LBA_Addr = $FF7C               ; Calculates LBA sector from cluster number.
-GetNextSector = $FF80          ; Increments sector, goes to FAT for next cluster if needed.
-FindNextCluster = $FF84        ; Find next cluster from FAT
+GetNextReadSector = $FF80      ; Increments sector, goes to FAT for next cluster if needed.
+GetNextReadClustert = $FF84    ; Find next cluster from FAT
+WriteFile = $FF88              ; Find next cluster from FAT
+UpdateDir = $FF8C              ; Update the Directory with FileName,FileSize,FirstCluster
 BootStrap = $FF90              ; Load file and run it.
+WriteFAT = $FF94               ; Write Current FAT to disk
+FindNextWriteSector = $FF98    ; Finds the next free Sector on disk
+FindFreeCluster = $FF9C        ; Finds the next free Cluster on disk
+LoadFAT = $FFA0                ; Read zero-th FAT Sector to $0500
 
