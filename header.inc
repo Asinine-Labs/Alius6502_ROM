@@ -21,6 +21,8 @@ ZP_Counter16 = $FC             ; 16 bit counter, 2 bytes including $FC,$FD
 ZP_SectorBufPTR = $FA          ; 2 bytes including FA,FB
 ZP_DIRRecordPTR = $F8          ; 2 bytes including F8,F9
 ZP_SectorSize = $F6            ; 2 bytes including F6,F7
+ZP_BlobBufPTR = $F4            ; Read/Write Buffer  $F4,$F5
+
 ; Content and display mask for the 7 segment display
 ZP_DisplayMask = $D3           ; D3,D4,D5,D6,D7,D8
 ZP_Display = $D0               ; D0,D1,D2
@@ -59,7 +61,8 @@ CurrentFATSector     = $0231      ; Which FAT sector is in memory
 RequestedFATSector   = $0232      ; Which FAT sector is requested
 BytesToWrite       = $0233     ; 4 bytes including 0233,0234,0235,0236
 SectorCount        = $0237     ; Number of whole sectors needed to load 0237,0238,0239,023A
-
+ChunkNum              = $0240      ; Chunk number to load/save
+ChunkTemp             = $0242      ; Chunk page number to load/save
 
 
 ; Used for loading of files from SDcard.
@@ -87,6 +90,9 @@ IRQ_Vec = $02FE                ; IRQ vector in RAM, $02FE and $02FF
 
 
 ; Rom jump table, fixed locations across ROM versions
+Read_Chunk = $FEF4             ; Read a chunk of a blob file
+Write_Chunk = $FEF8            ; Write a chunk of a blob file
+InitBlob = $FEFC               ; Setup blob file
 MonitorROM = $FF00             ; Main Monitor ROM
 UpdateDisplay = $FF10          ; Update the 7segmanet display
 ReadKeypad = $FF14             ; Reads the keypad, with debounce

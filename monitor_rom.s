@@ -33,6 +33,8 @@ ZP_Counter16 = $FC             ; 16 bit counter, 2 bytes including $FC,$FD
 ZP_SectorBufPTR = $FA          ; 2 bytes including FA,FB
 ZP_DIRRecordPTR = $F8          ; 2 bytes including F8,F9
 ZP_SectorSize = $F6            ; 2 bytes including F6,F7
+ZP_BlobBufPTR = $F4            ; Read/Write Buffer  $F4,$F5
+
 ; Content and display mask for the 7 segment display
 ZP_DisplayMask = $D3           ; D3,D4,D5,D6,D7,D8
 ZP_Display = $D0               ; D0,D1,D2
@@ -68,10 +70,12 @@ FAT1BeginLBA = $0224           ; 4 bytes including 0224,0225,0226,0227
 FAT2BeginLBA = $0228           ; 4 bytes including 0228,0229,022A,022B
 FATsize = $022C                ; 4 bytes including 022C,022D,022E,022F
 TempByte = $0230               ; Temp byte
-CurrentFATSector     = $0231      ; Which FAT sector is in memory
-RequestedFATSector   = $0232      ; Which FAT sector is requested
+CurrentFATSector     = $0231   ; Which FAT sector is in memory
+RequestedFATSector   = $0232   ; Which FAT sector is requested
 BytesToWrite       = $0233     ; 4 bytes including 0233,0234,0235,0236
 SectorCount        = $0237     ; Number of whole sectors needed to load 0237,0238,0239,023A
+ChunkNum          = $0240      ; Chunk number to load/save
+ChunkTemp         = $0242      ; Chunk page number to load/save
 
 
 
@@ -1906,6 +1910,199 @@ RequestFATSector:               ; Loads a requested Sector of the FAT
 
 
 
+InitBlob:
+.ClearMemory
+  lda #$00                     ; setup blob buffer at $0800
+  sta ZP_BlobBufPTR            ; setup blob buffer at $0800
+  lda #$08                     ; setup blob buffer at $0800
+  sta ZP_BlobBufPTR+1          ; setup blob buffer at $0800
+  ldy #$00                     ; clear memory from $0800 to $09FF
+  ldx #$02                     ; clear memory from $0800 to $09FF
+  lda #$00                     ; clear memory with $00
+.ClearMemLoop
+  sta (ZP_BlobBufPTR),y        ; clear byte of memory
+  iny                          ; move to next byte
+  bne .ClearMemLoop            ; go around again
+  clc                          ; clear carry before add.
+  lda ZP_BlobBufPTR+1          ; add one to MSB of buffer address
+  adc #$01                     ; add one to MSB of buffer address
+  sta ZP_BlobBufPTR+1          ; add one to MSB of buffer address
+  lda #$00                     ; reset A to $00 after adding
+  dex                          ; move counter to next page and see if we are done.
+  bne .ClearMemLoop            ; not done, so go clear more memory
+.CreateBlobFile
+  jsr FindFile                 ; Check if we have file with this name already
+  lda #$02                     ; 02 is File not found, so we are good to save file
+  cmp ErrorCode                ; Check if our error code is 02
+  beq .GoWriteBlobFile         ; File Not found, so we create it.
+  lda #$05                     ; Error 5 - I/O error.
+  sta ErrorCode                ; Store error code.
+  jmp .CreateBlobFileDone      ; Dont write file, return error
+.GoWriteBlobFile
+  lda FileSize                 ; Move file size to Bytes to write counter
+  sta BytesToWrite             ; Move file size to Bytes to write counter
+  lda FileSize+1               ; Move file size to Bytes to write counter
+  sta BytesToWrite+1           ; Move file size to Bytes to write counter
+  lda FileSize+2               ; Move file size to Bytes to write counter
+  sta BytesToWrite+2           ; Move file size to Bytes to write counter
+  lda FileSize+3               ; Move file size to Bytes to write counter
+  sta BytesToWrite+3           ; Move file size to Bytes to write counter
+  jsr LoadFAT                  ; Load a copy of the FAT to $0500
+  lda #$FF                     ; Set marker to show we have no previous cluster.
+  sta ClusterNum               ; Store $FF in MSB of ClusterNum to show we are first in chain.
+  jsr FindFreeCluster          ; Find our first free cluster
+  jsr LBA_Addr                 ; Get Sector number for the first cluster
+  lda ClusterNum               ; Copy the cluster number to First cluster so we have it for the dir entry
+  sta FileFirstCluster         ; Copy the cluster number to First cluster so we have it for the dir entry
+  lda ClusterNum+1             ; Copy the cluster number to First cluster so we have it for the dir entry
+  sta FileFirstCluster+1       ; Copy the cluster number to First cluster so we have it for the dir entry
+  lda ClusterNum+2             ; Copy the cluster number to First cluster so we have it for the dir entry
+  sta FileFirstCluster+2       ; Copy the cluster number to First cluster so we have it for the dir entry
+  lda ClusterNum+3             ; Copy the cluster number to First cluster so we have it for the dir entry
+  sta FileFirstCluster+3       ; Copy the cluster number to First cluster so we have it for the dir entry
+.WriteBlobFileLoop             ; Write the file to SDcard one sector at a time
+  lda BytesToWrite+1           ; Calculate number of whole sectors needed
+  sta SectorCount              ; Store the number of whole sectors needed
+  lda BytesToWrite+2           ; Calculate number of whole sectors needed
+  sta SectorCount+1            ; Store the number of whole sectors needed
+  lda BytesToWrite+3           ; Calculate number of whole sectors needed
+  sta SectorCount+2            ; Store the number of whole sectors needed
+  lda #$00
+  sta SectorCount+3
+  clc
+  ror SectorCount+3
+  ror SectorCount+2
+  ror SectorCount+1
+  ror SectorCount
+  lda #$00                     ; Setup Address (LSB)
+  sta ZP_SectorBufPTR          ; Setup Address (LSB)
+  lda #$08                     ; Setup Address (MSB)
+  sta ZP_SectorBufPTR+1        ; Setup Address (MSB)
+  lda SectorCount+3
+  ora SectorCount+2
+  ora SectorCount+1
+  ora SectorCount
+  sta SectorCount
+  lda #$00                     ; Check if one or more whole sectors to write
+  cmp SectorCount              ; Check number of sectors to load
+  beq .WriteBlobLastSector     ; Number of whole sectors is zero so Write last sector
+.WriteBlobFileSector           ; Write a whole sector
+  lda #$00                     ; Setup Address (LSB)
+  sta ZP_SectorBufPTR          ; Setup Address (LSB)
+  lda #$08                     ; Setup Address (MSB)
+  sta ZP_SectorBufPTR+1        ; Setup Address (MSB)
+  lda #$00                     ; Setup to write $200 bytes
+  sta ZP_SectorSize            ; Setup to write $200 bytes
+  lda #$02                     ; Setup to write $200 bytes
+  sta ZP_SectorSize+1          ; Setup to write $200 bytes
+  jsr SD_Card_Write_Sector     ; Write data to SDcard
+  lda BytesToWrite+1           ; Subtract $0200 from file size
+  sec                          ; Set carry before subtract
+  sbc #$02                     ; We only need to subtract from MSB of filesize
+  sta BytesToWrite+1           ; Store FileSize MSB again
+  lda BytesToWrite+2
+  sbc #$00                     ; subtract 00 to deal with borrow
+  sta BytesToWrite+2           ; Store FileSize again
+  lda BytesToWrite+3
+  sbc #$00                     ; subtract 00 to deal with borrow
+  sta BytesToWrite+3           ; Store FileSize again
+  jsr FindNextWriteSector      ; Find the next sector to Write to
+  jmp .WriteBlobFileLoop       ; Go around again and write more of the file
+.WriteBlobLastSector           ; Write the last sector
+  lda #$00                     ; Setup Address (LSB)
+  sta ZP_SectorBufPTR          ; Setup Address (LSB)
+  lda #$08                     ; Setup Address (MSB)
+  sta ZP_SectorBufPTR+1        ; Setup Address (MSB)
+  lda #$00                     ; Setup to write $200 bytes
+  sta ZP_SectorSize            ; Setup to write $200 bytes
+  lda #$02                     ; Setup to write $200 bytes
+  sta ZP_SectorSize+1          ; Setup to write $200 bytes
+  jsr SD_Card_Write_Sector     ; Write data to SDcard
+  jsr WriteFAT                 ; Write the FAT back the the SDcard.
+  jsr UpdateDir                ; Add the file to the directory structure.
+.CreateBlobFileDone
+  rts
+
+
+
+Read_Chunk:                    ; read a sector of a file.
+  lda #$00                     ; setup blob buffer at $0800
+  sta ZP_BlobBufPTR            ; setup blob buffer at $0800
+  lda #$08                     ; setup blob buffer at $0800
+  sta ZP_BlobBufPTR+1          ; setup blob buffer at $0800
+  lda ChunkNum
+  sta ChunkTemp                ; store chunk number
+  lda ChunkNum+1
+  sta ChunkTemp+1              ; store chunk number
+  jsr FindFile
+  jsr LBA_Addr                 ; Calculates LBA sector from Cluster number.
+.CountChunks                   ; loop to move through the file sector chain
+  lda ChunkTemp                ; loop to move through the file sector chain
+  ora ChunkTemp+1
+  cmp #$00                     ; loop to move through the file sector chain
+  beq .LoadChunk               ; loop to move through the file sector chain
+  jsr GetNextReadSector        ; loop to move through the file sector chain
+  sec                          ; set carry before subtract
+  lda ChunkTemp
+  sbc #$01
+  sta ChunkTemp
+  lda ChunkTemp+1
+  sbc #$00
+  sta ChunkTemp+1
+  jmp .CountChunks             ; loop to move through the file sector chain
+.LoadChunk
+  lda ZP_BlobBufPTR            ; Setup to read sector to ZP_BlobBufPTR
+  sta ZP_SectorBufPTR          ; Setup to read sector to ZP_BlobBufPTR
+  lda ZP_BlobBufPTR+1          ; Setup to read sector to ZP_BlobBufPTR
+  sta ZP_SectorBufPTR+1        ; Setup to read sector to ZP_BlobBufPTR
+  lda #$00                     ; Setup to read $200 bytes
+  sta ZP_SectorSize            ; Setup to read $200 bytes
+  lda #$02                     ; Setup to read $200 bytes
+  sta ZP_SectorSize+1          ; Setup to read $200 bytes
+  jsr SD_Card_Read_Sector      ; Read the sector to ZP_BlobBufPTR
+  rts
+
+
+
+Write_Chunk:                   ; Write a sector of a file.
+  lda #$00                     ; setup blob buffer at $0800
+  sta ZP_BlobBufPTR            ; setup blob buffer at $0800
+  lda #$08                     ; setup blob buffer at $0800
+  sta ZP_BlobBufPTR+1          ; setup blob buffer at $0800
+  lda ChunkNum
+  sta ChunkTemp                ; store chunk number
+  lda ChunkNum+1
+  sta ChunkTemp+1              ; store chunk number
+  jsr FindFile
+  jsr LBA_Addr                 ; Calculates LBA sector from Cluster number.
+.CountChunks                   ; loop to move through the file sector chain
+  lda ChunkTemp                ; loop to move through the file sector chain
+  ora ChunkTemp+1
+  cmp #$00                     ; loop to move through the file sector chain
+  beq .WriteChunk              ; loop to move through the file sector chain
+  jsr GetNextReadSector        ; loop to move through the file sector chain
+  sec                          ; set carry before subtract
+  lda ChunkTemp
+  sbc #$01
+  sta ChunkTemp
+  lda ChunkTemp+1
+  sbc #$00
+  sta ChunkTemp+1
+  jmp .CountChunks             ; loop to move through the file sector chain
+.WriteChunk
+  lda ZP_BlobBufPTR            ; Setup to read sector to ZP_BlobBufPTR
+  sta ZP_SectorBufPTR          ; Setup to read sector to ZP_BlobBufPTR
+  lda ZP_BlobBufPTR+1          ; Setup to read sector to ZP_BlobBufPTR
+  sta ZP_SectorBufPTR+1        ; Setup to read sector to ZP_BlobBufPTR
+  lda #$00                     ; Setup to read $200 bytes
+  sta ZP_SectorSize            ; Setup to read $200 bytes
+  lda #$02                     ; Setup to read $200 bytes
+  sta ZP_SectorSize+1          ; Setup to read $200 bytes
+  jsr SD_Card_Write_Sector     ; Read the DIR sector to $2000
+  rts
+
+
+
 BootStrap:
   jsr CreateFileName           ; Convert FileNumber to FileName
   jsr Init_SD_card             ; Init the SDcard to SPI mode.
@@ -2078,9 +2275,20 @@ Array_7seg:                    ; Which bits are needed for 7 segment display
   .byte 0b11110001             ; F
 
 
- .org $ff00                    ; A jump table so that ROM calls can be at fixed address across ROM versions
-  jmp MonitorROM               ; Main Monitor ROM
 
+
+
+ .org $FE00                    ; A jump table so that ROM calls can be at fixed address across ROM versions
+
+ .org $FEF4
+  jmp Read_Chunk               ; Setup blob file.
+ .org $FEF8
+  jmp Write_Chunk              ; Setup blob file.
+ .org $FEFC
+  jmp InitBlob                 ; Setup blob file.
+
+ .org $FF00
+  jmp MonitorROM               ; Main Monitor ROM
  .org $ff10
   jmp UpdateDisplay            ; Update the 7segmanet display
  .org $ff14
