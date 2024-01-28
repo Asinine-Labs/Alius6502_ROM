@@ -57,12 +57,15 @@ FAT1BeginLBA = $0224           ; 4 bytes including 0224,0225,0226,0227
 FAT2BeginLBA = $0228           ; 4 bytes including 0228,0229,022A,022B
 FATsize = $022C                ; 4 bytes including 022C,022D,022E,022F
 TempByte = $0230               ; Temp byte
-CurrentFATSector     = $0231      ; Which FAT sector is in memory
-RequestedFATSector   = $0232      ; Which FAT sector is requested
-BytesToWrite       = $0233     ; 4 bytes including 0233,0234,0235,0236
-SectorCount        = $0237     ; Number of whole sectors needed to load 0237,0238,0239,023A
-ChunkNum              = $0240      ; Chunk number to load/save
-ChunkTemp             = $0242      ; Chunk page number to load/save
+CurrentFATSector     = $0231   ; Which FAT sector is in memory
+RequestedFATSector   = $0232   ; Which FAT sector is requested
+BytesToWrite         = $0233   ; 4 bytes including 0233,0234,0235,0236
+SectorCount          = $0237   ; 4 bytes - Number of whole sectors needed to load 0237,0238,0239,023A
+ChunkNum             = $0240   ; 2 Bytes - Chunk number to load/save  0240,0241
+ChunkTemp            = $0242   ; 2 Bytes - Chunk page number to load/save 0242,0243
+FATDirty             = $0244   ; Dirty flag for FAT cache.
+BlobFirstCluster     = $0245   ; 4 bytes including 0245,0246,0247,0248
+
 
 
 ; Used for loading of files from SDcard.
