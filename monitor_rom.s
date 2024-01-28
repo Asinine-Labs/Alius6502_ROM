@@ -34,7 +34,6 @@ ZP_SectorBufPTR = $FA          ; 2 bytes including FA,FB
 ZP_DIRRecordPTR = $F8          ; 2 bytes including F8,F9
 ZP_SectorSize = $F6            ; 2 bytes including F6,F7
 ZP_BlobBufPTR = $F4            ; Read/Write Buffer  $F4,$F5
-
 ; Content and display mask for the 7 segment display
 ZP_DisplayMask = $D3           ; D3,D4,D5,D6,D7,D8
 ZP_Display = $D0               ; D0,D1,D2
@@ -72,11 +71,12 @@ FATsize = $022C                ; 4 bytes including 022C,022D,022E,022F
 TempByte = $0230               ; Temp byte
 CurrentFATSector     = $0231   ; Which FAT sector is in memory
 RequestedFATSector   = $0232   ; Which FAT sector is requested
-BytesToWrite       = $0233     ; 4 bytes including 0233,0234,0235,0236
-SectorCount        = $0237     ; Number of whole sectors needed to load 0237,0238,0239,023A
-ChunkNum          = $0240      ; Chunk number to load/save
-ChunkTemp         = $0242      ; Chunk page number to load/save
-
+BytesToWrite         = $0233   ; 4 bytes including 0233,0234,0235,0236
+SectorCount          = $0237   ; 4 bytes - Number of whole sectors needed to load 0237,0238,0239,023A
+ChunkNum             = $0240   ; 2 Bytes - Chunk number to load/save  0240,0241
+ChunkTemp            = $0242   ; 2 Bytes - Chunk page number to load/save 0242,0243
+FATDirty             = $0244   ; Dirty flag for FAT cache.
+BlobFirstCluster     = $0245   ; 4 bytes including 0245,0246,0247,0248
 
 
 ; Used for loading of files from SDcard.
@@ -1010,6 +1010,7 @@ ClusterBegin:                  ; Get Sectors per FAT, then * 2, then add FAT bag
   sta RootDirCluster+2         ; Store Directory First Cluster
   lda $032C                    ; Get Directory first cluster LSB
   sta RootDirCluster+3         ; Store directory First Cluster
+  jsr LoadFAT                  ; Load first sector of FAT
   lda #$00                     ; Set error to no error
   sta ErrorCode                ; Return no error
   rts                          ; Return
@@ -1167,65 +1168,29 @@ GetNextReadSector:
 
 
 GetNextReadCluster:
-  lda FAT1BeginLBA             ; Copy FAT begin to sector
-  sta CurrentSector            ; Copy FAT begin to sector
-  lda FAT1BeginLBA+1           ; Copy FAT begin to sector
-  sta CurrentSector+1          ; Copy FAT begin to sector
-  lda FAT1BeginLBA+2           ; Copy FAT begin to sector
-  sta CurrentSector+2          ; Copy FAT begin to sector
-  lda FAT1BeginLBA+3           ; Copy FAT begin to sector
-  sta CurrentSector+3          ; Copy FAT begin to sector
-  lda ClusterNum+3             ; Keep lower 7 bits of cluster number for later
-  and #$7F                     ; Mask off top bit to keep lower 7 bits for later
-  sta TempByte                 ; Store lower 7 bits for later
-; Each FAT entery is 4 bytes, so 128 entries per sector.
-; So we want to divide the Cluster number by 128, then add FAT begin.
-; This divide could be done by Rotate Right 7 times.
-; But it's faster to Rotare Left to get * 2 and then just offset the add by one whole byte.
-  clc                          ; Clear carry before rolling bits
-  rol ClusterNum+3             ; Roll to get * 2
-  rol ClusterNum+2             ; Roll to get * 2
-  rol ClusterNum+1             ; Roll to get * 2
-  rol ClusterNum               ; Roll to get * 2
-  clc                          ; Clear carry before add
-  lda ClusterNum+2             ; Add but with one byte offset
-  adc CurrentSector+3          ; Add ClusterNum and Sector
-  sta CurrentSector+3          ; Store in sector ready for load
-  lda ClusterNum+1             ; Add but with one byte offset
-  adc CurrentSector+2          ; Add ClusterNum and Sector
-  sta CurrentSector+2          ; Store in sector ready for load
-  lda ClusterNum               ; Add but with one byte offset
-  adc CurrentSector+1          ; Add ClusterNum and Sector
-  sta CurrentSector+1          ; Store in sector ready for load
-  lda #$00                     ; Add 00
-  adc CurrentSector            ; Add 00 to deal with carry
-  sta CurrentSector            ; Store in sector ready for load
-; End of the magic divide by 128 and add FAT begin math
-  lda #$00                     ; Setup to read FAT to $0300
-  sta ZP_SectorBufPTR          ; Setup to read FAT to $0300
-  lda #$03                     ; Setup to read FAT to $0300
-  sta ZP_SectorBufPTR+1        ; Setup to read FAT to $0300
-  lda #$00                     ; Setup to read $200 bytes
-  sta ZP_SectorSize            ; Setup to read $200 bytes
-  lda #$02                     ; Setup to read $200 bytes
-  sta ZP_SectorSize+1          ; Setup to read $200 bytes
-  jsr SD_Card_Read_Sector      ; Read FAT to $0300
+  lda ClusterNum+3             ; Get second byte of Cluster num
+  rol                          ; Rotate upper bit to carry
+  lda ClusterNum+2             ; Get next byte
+  rol                          ; Rotate carry into lower bit.
+  sta RequestedFATSector       ; Requested fat sector is Cluster num / 128
+  jsr RequestFATSector         ; Request FAT Sector
   lda #$00                     ; Zero out offset into FAT
   sta ZP_DIRRecordPTR          ; Zero out offset into FAT
   sta ZP_DIRRecordPTR+1        ; Zero out offset into FAT
-  lda TempByte                 ; Get the lower 7 bits we stored earlert which record in the FAT we need
+  lda ClusterNum+3             ; Keep lower 7 bits of cluster number for later
+  and #$7F                     ; Mask off top bit to keep lower 7 bits for later
   sta ZP_DIRRecordPTR          ; Store the lower 7 bits to the pointer
   clc                          ; Clear carry for rotate
   rol ZP_DIRRecordPTR          ; Mul*2
   rol ZP_DIRRecordPTR          ; Mul*2 again (4 bytes per record in the FAT)
   rol ZP_DIRRecordPTR+1        ; Deal with overflow of mul
   clc                          ; Clear carry before add
-  lda ZP_DIRRecordPTR+1        ; Add $0300 to offset into FAT.
-  adc #$03                     ; add $0300 to offset into FAT.
-  sta ZP_DIRRecordPTR+1        ; add $0300 to offset into FAT.
-  lda #$00                     ; add $0300 to offset into FAT.
-  adc ZP_DIRRecordPTR          ; add $0300 to offset into FAT.
-  sta ZP_DIRRecordPTR          ; add $0300 to offset into FAT.
+  lda ZP_DIRRecordPTR+1        ; Add $0500 to offset into FAT.
+  adc #$05                     ; add $0500 to offset into FAT.
+  sta ZP_DIRRecordPTR+1        ; add $0500 to offset into FAT.
+  lda #$00                     ; add $0500 to offset into FAT.
+  adc ZP_DIRRecordPTR          ; add $0500 to offset into FAT.
+  sta ZP_DIRRecordPTR          ; add $0500 to offset into FAT.
   ldy #$00                     ; lookup new cluster number from FAT
   lda (ZP_DIRRecordPTR),y      ; lookup new cluster number from FAT
   sta ClusterNum+3             ; lookup new cluster number from FAT
@@ -1534,10 +1499,10 @@ FindFreeCluster:               ; Returns free cluster number to ClusterNum
   lda ClusterNum+2             ; get next byte
   rol                          ; rotate carry into lower bit.
   sta RequestedFATSector       ; requested fat sector is Cluster num / 128
+  jsr RequestFATSector         ; load correct FAT sector
   lda ClusterNum+3             ; mask off lower bits of clusternumber
   and #$80                     ; so we can search from sector start
   sta ClusterNum+3             ; store clusternum
-  jsr RequestFATSector         ; load correct FAT sector
   lda #$00                     ; Set pointer to $0500
   sta ZP_DIRRecordPTR          ; Set pointer to $0500
   lda #$05                     ; Set pointer to $0500
@@ -1598,6 +1563,8 @@ FindFreeCluster:               ; Returns free cluster number to ClusterNum
   sta (ZP_DIRRecordPTR),y      ; Mark new cluster as end of chain.
   iny                          ; Mark all 4 bytes as $FF
   sta (ZP_DIRRecordPTR),y      ; Mark new cluster as end of chain.
+  lda #$01                     ; Set FAT Dirty flag.
+  sta FATDirty                 ; Set FAT Dirty flag.
   lda #$FF                     ; Check if High byte of Cluster Temp is $FF
   cmp ClusterTemp              ; If high byte is $FF then this is the first cluster and we dont need to link it
   bne LinkClusterChain         ; If it is not $FF then we go and link clustertemp (previous cluster) to clusternum
@@ -1606,6 +1573,8 @@ FindFreeCluster:               ; Returns free cluster number to ClusterNum
 
 
 LinkClusterChain:
+  lda #$01                     ; Set FAT Dirty flag.
+  sta FATDirty                 ; Set FAT Dirty flag.
   lda ClusterTemp+3            ; Get second byte of Cluster num
   rol                          ; rotate upper bit to carry
   lda ClusterTemp+2            ; get next byte
@@ -1642,6 +1611,8 @@ LinkClusterChain:
   iny                          ; Increment byte index
   lda ClusterNum               ; Get next byte of new cluster
   sta (ZP_DIRRecordPTR),y      ; Store to record of new cluster
+  lda #$01                     ; Set FAT Dirty flag.
+  sta FATDirty                 ; Set FAT Dirty flag.
   rts
 
 
@@ -1753,6 +1724,8 @@ LoadFAT:                       ; Just load zero-th sector of the FAT to $0500
   jsr SD_Card_Read_Sector      ; Read FAT to $0500
   lda #$00                     ; current FAT Sector is 00
   sta CurrentFATSector         ; current FAT Sector is 00
+  lda #$00                     ; Clear FAT Dirty flag.
+  sta FATDirty                 ; Clear FAT Dirty flag.
   rts
 
 
@@ -1817,8 +1790,13 @@ WriteFAT:                      ; Writes current secotr of FAT back to disk
 RequestFATSector:               ; Loads a requested Sector of the FAT
   lda RequestedFATSector        ; Which sector is requested?
   cmp CurrentFATSector          ; Check against current sector
-  bne .FlushCurrentFATSector    ; Flush current sector and load requested sector.
-  jmp .LoadFATDone              ; if requested FAT sector is loaded then we are done.
+  bne .CheckDirtyFlag           ; Load requested sector.
+  jmp .LoadFATDone              ; If requested FAT sector is loaded then we are done.
+.CheckDirtyFlag                 ; Check if we need to flush before load.
+  lda #$00                      ; $00 is a clean flag
+  cmp FATDirty                  ; Check value of FATDirty
+  bne .FlushCurrentFATSector    ; FAT Dirty, so flush old FAT
+  jmp .LoadRequestedFATSector   ; FAT Clean, so go read new FAT
 .FlushCurrentFATSector          ; Writes buffer at $0500 back to disk
   lda FAT1BeginLBA              ; Copy FAT begin to current sector
   sta CurrentSector             ; Copy FAT begin to current sector
@@ -1905,6 +1883,8 @@ RequestFATSector:               ; Loads a requested Sector of the FAT
   jsr SD_Card_Read_Sector       ; Read the FATsector to $0500
   lda RequestedFATSector        ; Update CurrentFATSector to match RequestedFATSector
   sta CurrentFATSector          ; Update CurrentFATSector to match RequestedFATSector
+  lda #$00                      ; Clear FAT Dirty flag.
+  sta FATDirty                  ; Clear FAT Dirty flag.
 .LoadFATDone
   rts
 
@@ -1935,8 +1915,18 @@ InitBlob:
   lda #$02                     ; 02 is File not found, so we are good to save file
   cmp ErrorCode                ; Check if our error code is 02
   beq .GoWriteBlobFile         ; File Not found, so we create it.
-  lda #$05                     ; Error 5 - I/O error.
-  sta ErrorCode                ; Store error code.
+  lda ClusterNum               ; Get the First cluster number so we can keep it for later
+  sta FileFirstCluster         ; Keep First Cluster so we have it for the dir entry
+  sta BlobFirstCluster         ; Keep First Cluster for Blob access
+  lda ClusterNum+1             ; Get the First cluster number so we can keep it for later
+  sta FileFirstCluster+1       ; Keep First Cluster so we have it for the dir entry
+  sta BlobFirstCluster+1       ; Keep First Cluster for Blob access
+  lda ClusterNum+2             ; Get the First cluster number so we can keep it for later
+  sta FileFirstCluster+2       ; Keep First Cluster so we have it for the dir entry
+  sta BlobFirstCluster+2       ; Keep First Cluster for Blob access
+  lda ClusterNum+3             ; Get the First cluster number so we can keep it for later
+  sta FileFirstCluster+3       ; Keep First Cluster so we have it for the dir entry
+  sta BlobFirstCluster+3       ; Keep First Cluster for Blob access
   jmp .CreateBlobFileDone      ; Dont write file, return error
 .GoWriteBlobFile
   lda FileSize                 ; Move file size to Bytes to write counter
@@ -1952,14 +1942,18 @@ InitBlob:
   sta ClusterNum               ; Store $FF in MSB of ClusterNum to show we are first in chain.
   jsr FindFreeCluster          ; Find our first free cluster
   jsr LBA_Addr                 ; Get Sector number for the first cluster
-  lda ClusterNum               ; Copy the cluster number to First cluster so we have it for the dir entry
-  sta FileFirstCluster         ; Copy the cluster number to First cluster so we have it for the dir entry
-  lda ClusterNum+1             ; Copy the cluster number to First cluster so we have it for the dir entry
-  sta FileFirstCluster+1       ; Copy the cluster number to First cluster so we have it for the dir entry
-  lda ClusterNum+2             ; Copy the cluster number to First cluster so we have it for the dir entry
-  sta FileFirstCluster+2       ; Copy the cluster number to First cluster so we have it for the dir entry
-  lda ClusterNum+3             ; Copy the cluster number to First cluster so we have it for the dir entry
-  sta FileFirstCluster+3       ; Copy the cluster number to First cluster so we have it for the dir entry
+  lda ClusterNum               ; Get the First cluster number so we can keep it for later
+  sta FileFirstCluster         ; Keep First Cluster so we have it for the dir entry
+  sta BlobFirstCluster         ; Keep First Cluster for Blob access
+  lda ClusterNum+1             ; Get the First cluster number so we can keep it for later
+  sta FileFirstCluster+1       ; Keep First Cluster so we have it for the dir entry
+  sta BlobFirstCluster+1       ; Keep First Cluster for Blob access
+  lda ClusterNum+2             ; Get the First cluster number so we can keep it for later
+  sta FileFirstCluster+2       ; Keep First Cluster so we have it for the dir entry
+  sta BlobFirstCluster+2       ; Keep First Cluster for Blob access
+  lda ClusterNum+3             ; Get the First cluster number so we can keep it for later
+  sta FileFirstCluster+3       ; Keep First Cluster so we have it for the dir entry
+  sta BlobFirstCluster+3       ; Keep First Cluster for Blob access
 .WriteBlobFileLoop             ; Write the file to SDcard one sector at a time
   lda BytesToWrite+1           ; Calculate number of whole sectors needed
   sta SectorCount              ; Store the number of whole sectors needed
@@ -2034,8 +2028,17 @@ Read_Chunk:                    ; read a sector of a file.
   sta ChunkTemp                ; store chunk number
   lda ChunkNum+1
   sta ChunkTemp+1              ; store chunk number
-  jsr FindFile
-  jsr LBA_Addr                 ; Calculates LBA sector from Cluster number.
+  lda BlobFirstCluster         ; Get First Cluster of Blob for searching
+  sta ClusterNum               ; Set Cluster Number for start of search
+  lda BlobFirstCluster+1       ; Get First Cluster of Blob for searching
+  sta ClusterNum+1             ; Set Cluster Number for start of search
+  lda BlobFirstCluster+2       ; Get First Cluster of Blob for searching
+  sta ClusterNum+2             ; Set Cluster Number for start of search
+  lda BlobFirstCluster+3       ; Get First Cluster of Blob for searching
+  sta ClusterNum+3             ; Set Cluster Number for start of search
+  jsr LBA_Addr                 ; Convert Cluster num to sector num
+  lda #$01                     ; Reset Sector index to 01
+  sta SectorIndex              ; Reset Sector index to 01
 .CountChunks                   ; loop to move through the file sector chain
   lda ChunkTemp                ; loop to move through the file sector chain
   ora ChunkTemp+1
@@ -2073,8 +2076,17 @@ Write_Chunk:                   ; Write a sector of a file.
   sta ChunkTemp                ; store chunk number
   lda ChunkNum+1
   sta ChunkTemp+1              ; store chunk number
-  jsr FindFile
-  jsr LBA_Addr                 ; Calculates LBA sector from Cluster number.
+  lda BlobFirstCluster         ; Get First Cluster of Blob for searching
+  sta ClusterNum               ; Set Cluster Number for start of search
+  lda BlobFirstCluster+1       ; Get First Cluster of Blob for searching
+  sta ClusterNum+1             ; Set Cluster Number for start of search
+  lda BlobFirstCluster+2       ; Get First Cluster of Blob for searching
+  sta ClusterNum+2             ; Set Cluster Number for start of search
+  lda BlobFirstCluster+3       ; Get First Cluster of Blob for searching
+  sta ClusterNum+3             ; Set Cluster Number for start of search
+  jsr LBA_Addr                 ; Convert Cluster num to sector num
+  lda #$01                     ; Reset Sector index to 01
+  sta SectorIndex              ; Reset Sector index to 01
 .CountChunks                   ; loop to move through the file sector chain
   lda ChunkTemp                ; loop to move through the file sector chain
   ora ChunkTemp+1
