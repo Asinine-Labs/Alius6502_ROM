@@ -1891,6 +1891,7 @@ RequestFATSector:               ; Loads a requested Sector of the FAT
 
 
 InitBlob:
+  sta TempByte                 ; If A is $00 then allocate file but dont write, $FF == zero fill file.
 .ClearMemory
   lda #$00                     ; setup blob buffer at $0800
   sta ZP_BlobBufPTR            ; setup blob buffer at $0800
@@ -1989,7 +1990,11 @@ InitBlob:
   sta ZP_SectorSize            ; Setup to write $200 bytes
   lda #$02                     ; Setup to write $200 bytes
   sta ZP_SectorSize+1          ; Setup to write $200 bytes
+  lda #$FF                     ; Check the flag for if we write the sector
+  cmp TempByte                 ; TempByte is the flag for empty file or not.
+  bne .WriteDone               ; Branch over the sector write
   jsr SD_Card_Write_Sector     ; Write data to SDcard
+.WriteDone
   lda BytesToWrite+1           ; Subtract $0200 from file size
   sec                          ; Set carry before subtract
   sbc #$02                     ; We only need to subtract from MSB of filesize
