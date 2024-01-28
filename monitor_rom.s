@@ -1389,7 +1389,9 @@ WriteFile:
   jsr FindFile                 ; Check if we have file with this name already
   lda #$02                     ; 02 is File not found, so we are good to save file
   cmp ErrorCode                ; Check if our error code is 02
-  bne WriteFileError           ; dont write file, return error
+  beq .SetupWrite              ; Go write the file.
+  jmp WriteFileError           ; Dont write file, return error
+.SetupWrite
   lda FileSize                 ; Move file size to Bytes to write counter
   sta BytesToWrite             ; Move file size to Bytes to write counter
   lda FileSize+1               ; Move file size to Bytes to write counter
@@ -1429,12 +1431,20 @@ WriteFileSector:               ; Write a whole sector
   clc                          ; Clear carry before add
   adc #$02                     ; Add $0200 to file load pointer (MSB)
   sta FileAddrPTR+1            ; Store Load address MSB
+  lda BytesToWrite+3           ; Check if we have more bytes to write
+  ora BytesToWrite+2           ; Check if we have more bytes to write
+  ora BytesToWrite+1           ; Check if we have more bytes to write
+  ora BytesToWrite             ; Check if we have more bytes to write
+  cmp #$00                     ; Check if byte to write is $00
+  beq WriteFileCleanup         ; If nothing more to write then do cleanup
   jsr FindNextWriteSector      ; Find the next sector to Write to
   jmp WriteFileLoop            ; Go around again and write more of the file
 WriteLastSector:               ; Write the last sector
   jsr SD_Card_Write_Sector     ; Write data to SDcard
+WriteFileCleanup:
   jsr WriteFAT                 ; Write the FAT back the the SDcard.
   jsr UpdateDir                ; Add the file to the directory structure.
+DoneFileWrite:
   rts
 
 
@@ -2005,6 +2015,12 @@ InitBlob:
   lda BytesToWrite+3
   sbc #$00                     ; subtract 00 to deal with borrow
   sta BytesToWrite+3           ; Store FileSize again
+  lda BytesToWrite+3           ; Check if we have more bytes to write
+  ora BytesToWrite+2           ; Check if we have more bytes to write
+  ora BytesToWrite+1           ; Check if we have more bytes to write
+  ora BytesToWrite             ; Check if we have more bytes to write
+  cmp #$00                     ; Check if bytes to write is $00
+  beq .CreateBlobCleanup       ; If nothing more to write then do cleanup
   jsr FindNextWriteSector      ; Find the next sector to Write to
   jmp .WriteBlobFileLoop       ; Go around again and write more of the file
 .WriteBlobLastSector           ; Write the last sector
@@ -2017,6 +2033,7 @@ InitBlob:
   lda #$02                     ; Setup to write $200 bytes
   sta ZP_SectorSize+1          ; Setup to write $200 bytes
   jsr SD_Card_Write_Sector     ; Write data to SDcard
+.CreateBlobCleanup
   jsr WriteFAT                 ; Write the FAT back the the SDcard.
   jsr UpdateDir                ; Add the file to the directory structure.
 .CreateBlobFileDone
