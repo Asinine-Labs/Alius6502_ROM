@@ -355,7 +355,7 @@ ReadKeypad:                             ; Reads keypad with debounce (blocking)
   cmp #$FF                              ; $FF means nothing pressed
   beq ReadKeypadExit                    ; Nothing pressed, so return
 WaitKeyRelease:                         ; Waits for ScanKeypad to return $FF (No key pressed)
-  jsr Sleep_Short                       ; Sleeps about 0.1 of a second
+  jsr Sleep_Short                       ; Sleeps about 2 milliSeconds
   jsr ScanKeypad                        ; Check what is press right now
   cmp #$FF                              ; $FF means nothings pressed
   bne WaitKeyRelease                    ; Jump back to wait loop
@@ -404,7 +404,7 @@ FindCol:
 
 
 
-Sleep_Long:                             ; Sleep for about 0.5 second
+Sleep_Long:                             ; Sleep for about 0.5 second @ 1MHz
   ldx #$FF                              ; Setup X as inner loop
   ldy #$FF                              ; Setup Y as outer loop
 Sleep_loop_Y:                           ; Top of outer loop
@@ -419,7 +419,7 @@ Sleep_loop_X:                           ; Top of inner loop
 
 
 
-Sleep_Short:                            ; Sleep for about 50mS
+Sleep_Short:                            ; Sleep for about 2 milliSeconds
   ldx #$FF                              ; Setup X for the loop
 Sleep_Short_loop:
   dex                                   ; Decrement X until it rolls back to $FF
@@ -573,7 +573,7 @@ SPI_Read_Bit:
 
 
 Init_SD_card:
-  jsr Sleep_Short                       ; Sleep about 100ms to ensure card is powered up.
+  jsr Sleep_Short                       ; Sleep about 2 milliSeconds to ensure card is powered up.
   lda #0b00001110                       ; State = SDCard_CS_ high, 7Seg_CS_ high, data high, clock low
   sta PORTB                             ; State to PORTB
   lda #20                               ; Cycle the SPI clock 160 times by sending 20 bytes with CS_ high
@@ -769,7 +769,13 @@ CMD17:
   cmp #$00                              ; check that we have no error
   beq CMD17_StartToken                  ; If no error then wait for start token
   jmp SD_Card_Error                     ; if error then exit read sector
+  lda #$FF                              ; Set Counter to $FF
+  sta ZP_Counter                        ; Set Counter to $FF
 CMD17_StartToken:
+  dec ZP_Counter                        ; Decrement Counter
+  bne ReadToken                         ; If Counter not zero then read token.
+  jmp SD_Card_Error                     ; If Counter is zero then Token took too long.
+ReadToken:
   jsr SPI_Read_Byte                     ; Read Start Token byte
   cmp #$FE                              ; Check if start token $FE has been read
   bne CMD17_StartToken                  ; Loop until start token is read
@@ -1988,9 +1994,7 @@ InitBlob:
   ora SectorCount+2                     ; Check if SectorCount = 0
   ora SectorCount+1                     ; Check if SectorCount = 0
   ora SectorCount                       ; Check if SectorCount = 0
-  sta SectorCount                       ; Check if SectorCount = 0
-  lda #$00                              ; Check if one or more whole sectors to write
-  cmp SectorCount                       ; Check number of sectors to load
+  cmp #$00                              ; Check number of whole sectors to load.
   beq .WriteBlobLastSector              ; Number of whole sectors is zero so Write last sector
 .WriteBlobFileSector                    ; Write a whole sector
   lda #$00                              ; Setup Address (LSB)
