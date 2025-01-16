@@ -1,7 +1,7 @@
 ; This demo draws a Sierpinski triangle using Chaos game.
 
 FileAddrPTR = $0260           ; Pointer to file in memory, $0260(LSB),$0261(MSB)
-FileSize = $025D              ; File Size, 2 bytes including $025D(LSB) ,$025E(MSB)
+FileSize = $0266              ; File Size, 4 bytes including $0266(LSB), $0267, 0268, $0269(MSB)
 FileNumber = $0250            ; File Number to create FileName
 FileName = $0251              ; File Name to save
 
@@ -261,6 +261,10 @@ SaveFile:                     ; Writes file to disk
   sta FileSize                ; Set file size to $2020 
   lda #$20                    ; Set file size to $2020
   sta FileSize+1              ; Set file size to $2020
+  lda #$00                    ; Set file size to $2020
+  sta FileSize+2              ; Set file size to $2020
+  lda #$00                    ; Set file size to $2020
+  sta FileSize+3              ; Set file size to $2020
 ; "triangle.bmp" = 74 72 69 61 6E 67 6C 65 62 6D 70
   lda #$74
   sta FileName 
